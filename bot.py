@@ -1,27 +1,22 @@
 import os
 import json
-import asyncio
 import logging
 from datetime import datetime
-
 from telegram import (
-    Update, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 )
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    ContextTypes, filters
+    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
 from fill_pdf import fill_pdf
 from email_sender import send_email
-from config import BOT_TOKEN, TO_EMAIL, WEBAPP_URL, ALLOWED_CHAT_IDS, ALLOWED_USER_IDS
+from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_CHAT_IDS, ALLOWED_USER_IDS
 
-# Настройка логирования
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-
-# /start — показать кнопку с WebApp
+# /start команда с инлайн-кнопкой (надежный вызов WebApp)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.debug(f"[START] user_id = {user_id}")
@@ -30,21 +25,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ У вас нет доступа к использованию этого бота.")
         return
 
-    keyboard = ReplyKeyboardMarkup(
-        [[KeyboardButton(text="Открыть форму", web_app=WebAppInfo(url=WEBAPP_URL))]],
-        resize_keyboard=True
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 Заполнить заявку", web_app=WebAppInfo(url=WEBAPP_URL))]
+    ])
+    await update.message.reply_text(
+        "Нажмите кнопку ниже, чтобы открыть форму заявки:",
+        reply_markup=keyboard
     )
 
-    await update.message.reply_text("Откройте форму заявки:", reply_markup=keyboard)
 
-
-# Обработка web_app_data
-async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.debug(f"[WEBAPP] Получен update: {update}")
+# Обработка данных из WebApp
+async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.debug(f"[HANDLE_WEBAPP] Получен update: {update}")
 
     try:
         if not update.message:
-            logger.warning("[WEBAPP] ❌ Нет update.message.")
+            logger.warning("[HANDLE_WEBAPP] ❌ Нет update.message")
             return
 
         if update.effective_user.id not in ALLOWED_CHAT_IDS:
@@ -52,17 +48,18 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if not update.message.web_app_data:
-            logger.warning("[WEBAPP] ❌ Нет web_app_data.")
+            logger.warning("[HANDLE_WEBAPP] ❌ Нет web_app_data")
             await update.message.reply_text("❌ Данные не получены.")
             return
 
         raw_data = update.message.web_app_data.data
-        logger.debug(f"[WEBAPP] Получены данные: {raw_data}")
+        logger.debug(f"[HANDLE_WEBAPP] Получены данные: {raw_data}")
 
+        # Telegram иногда передаёт мусорные символы — удалим
         cleaned_data = ''.join(c for c in raw_data if c >= ' ')
         data = json.loads(cleaned_data)
 
-        logger.debug(f"[WEBAPP] Распарсено: {data}")
+        logger.debug(f"[HANDLE_WEBAPP] Распарсенные данные: {data}")
 
         if not data.get("date"):
             data["date"] = datetime.now().strftime("%d.%m.%Y")
@@ -72,17 +69,17 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         filename = f"Заявка_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         output_file = os.path.join(output_dir, filename)
-        template_path = os.path.join(os.path.dirname(__file__), "template.pdf")
+        template_file = os.path.join(os.path.dirname(__file__), "template.pdf")
 
-        logger.debug("[PDF] Генерация PDF...")
-        fill_pdf(template_path, output_file, data)
-        logger.debug(f"[PDF] Сохранено в: {output_file}")
+        logger.debug("[PDF] Заполнение PDF...")
+        fill_pdf(template_file, output_file, data)
+        logger.debug(f"[PDF] Файл сохранён: {output_file}")
 
-        logger.debug("[EMAIL] Отправка на почту...")
+        logger.debug("[EMAIL] Отправка email...")
         send_email("Заявка на пропуск", "Сформирована новая заявка", output_file)
-        logger.debug("[EMAIL] Письмо отправлено")
+        logger.debug("[EMAIL] Успешно отправлено.")
 
-        await update.message.reply_text("✅ Заявка отправлена по почте.")
+        await update.message.reply_text("✅ Заявка успешно отправлена по почте.")
 
         summary = (
             f"📩 <b>Заявка отправлена</b>\n\n"
@@ -109,26 +106,29 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for admin_id in ALLOWED_CHAT_IDS:
             try:
                 await context.bot.send_message(chat_id=admin_id, text=summary, parse_mode="HTML")
-                logger.debug(f"[SEND] Отправлено в чат {admin_id}")
+                logger.debug(f"[SEND] Уведомление отправлено в чат {admin_id}")
             except Exception as e:
-                logger.error(f"[SEND] ❌ Не удалось отправить в чат {admin_id}: {e}")
+                logger.error(f"[SEND] ❌ Ошибка при отправке сообщения {admin_id}: {e}")
 
     except Exception as e:
-        logger.exception("❌ Ошибка в handle_webapp")
+        logger.exception("❌ Ошибка в обработке WebApp данных")
         if update.message:
             await update.message.reply_text("❌ Ошибка при обработке заявки.")
 
 
-# Точка входа
 if __name__ == "__main__":
-    logger.info(f"[STARTING] BOT_TOKEN: {BOT_TOKEN}")
+    logger.debug("[BOOT] Запуск бота...")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # /start
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp))
 
-    logger.info("[BOT] Запускаем polling...")
+    # Обработка только web_app_data
+    app.add_handler(MessageHandler(filters.TEXT & filters.UpdateType.MESSAGE, handle_webapp_data))
+
+    logger.debug("[BOT] Бот слушает...")
     app.run_polling()
+
 
 
 
