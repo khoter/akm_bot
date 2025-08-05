@@ -1,71 +1,92 @@
 import os
 import json
 import logging
-from telegram import Update, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
+from datetime import datetime
+from telegram import Update, WebAppData, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,
     CommandHandler,
     MessageHandler,
     ContextTypes,
     filters,
 )
+from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS
 from fill_pdf import fill_pdf
 from email_sender import send_email
-from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS
 
 # Настройка логирования
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-TEMPLATE_PATH = "template.pdf"
-TEMP_OUTPUT_PATH = "filled_form.pdf"
-
-# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ALLOWED_USER_IDS:
-        await update.message.reply_text("⛔️ У вас нет доступа к использованию бота.")
+        await update.message.reply_text("⛔️ У вас нет доступа к использованию формы.")
+        logger.warning(f"ACCESS DENIED: user {user_id} not in ALLOWED_USER_IDS")
         return
 
-    keyboard = [[KeyboardButton(text="📝 Оформить заявку", web_app=WebAppInfo(url=WEBAPP_URL))]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Нажмите кнопку ниже, чтобы заполнить форму:", reply_markup=reply_markup)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 Оформить заявку", web_app={'url': WEBAPP_URL})]
+    ])
 
-# Обработка данных из WebApp
+    await update.message.reply_text(
+        "Добро пожаловать! Нажмите кнопку ниже, чтобы заполнить заявку:",
+        reply_markup=keyboard
+    )
+    logger.debug(f"Sent inline keyboard to user {user_id}")
+
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    web_app_data: WebAppData = update.message.web_app_data
+
+    logger.debug("[WEB_APP] Получены данные от Telegram:")
+    logger.debug(web_app_data.data)
+
     if user_id not in ALLOWED_USER_IDS:
-        await update.message.reply_text("⛔️ У вас нет доступа.")
+        await context.bot.send_message(chat_id=chat_id, text="⛔️ У вас нет доступа к использованию формы.")
+        logger.warning(f"ACCESS DENIED: user {user_id} not in ALLOWED_USER_IDS")
         return
 
     try:
-        data = json.loads(update.message.web_app_data.data)
-        logger.debug(f"[DATA RECEIVED] from {user_id}")
-        logger.debug(f"[FORM DATA]: {data}")
+        data = json.loads(web_app_data.data)
+        logger.debug(f"[WEB_APP] Данные успешно разобраны: {data}")
 
-        # Заполнение PDF
-        fill_pdf(TEMPLATE_PATH, TEMP_OUTPUT_PATH, data)
-        logger.debug("[PDF GENERATED]")
+        # Создание выходной директории
+        os.makedirs("output", exist_ok=True)
 
-        # Отправка email
-        subject = "Заявка на пропуск"
-        body = "Прикреплен файл с заявкой из Telegram WebApp."
-        send_email(subject, body, TEMP_OUTPUT_PATH)
-        logger.debug("[EMAIL SENT]")
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        output_path = f"output/form_{user_id}_{timestamp}.pdf"
+        logger.debug(f"[PDF] Output path: {output_path}")
 
-        await update.message.reply_text("✅ Заявка успешно отправлена!")
+        fill_pdf("template.pdf", output_path, data)
+        logger.info(f"[PDF] Заявка заполнена для {data.get('person', 'неизвестно')}")
+
+        subject = f"Заявка от {data.get('person', 'неизвестно')}"
+        body = "В приложении заявка, отправленная через Telegram."
+
+        send_email(subject, body, output_path)
+        logger.info(f"[EMAIL] Заявка отправлена на почту: {output_path}")
+
+        await context.bot.send_message(chat_id=chat_id, text="✅ Заявка успешно отправлена!")
 
     except Exception as e:
-        logger.exception("[ERROR] Ошибка при обработке данных из Web App")
-        await update.message.reply_text(f"❌ Ошибка при отправке заявки: {e}")
+        logger.exception("[ERROR] При обработке данных формы произошла ошибка")
+        await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка при отправке: {e}")
 
-# Запуск
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    logger.info("Бот запущен")
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(
+        filters.ALL & filters.UpdateType.MESSAGE & filters.Regex(".*") & filters.TEXT & filters.ChatType.PRIVATE,
+        handle_web_app_data
+    ))
+
+    logger.info("Bot started...")
     app.run_polling()
 
 if __name__ == "__main__":
