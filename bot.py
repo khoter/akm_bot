@@ -5,8 +5,8 @@ from datetime import datetime
 from telegram import Update, WebAppData
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-from make_pdf import generate_pdf
-from send_email import send_email_with_attachment
+from fill_pdf import generate_pdf
+from email_sender import send_email_with_attachment
 
 # --- Конфигурация ---
 TOKEN = 'YOUR_TOKEN'
