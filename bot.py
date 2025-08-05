@@ -31,19 +31,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Обработка web_app данных
 async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    logging.debug(f"[HANDLE_WEBAPP] Получен update от user_id={user_id}")
+    logging.debug(f"[HANDLE_WEBAPP] Полный update: {update}")
 
     if user_id not in ALLOWED_CHAT_IDS:
         await update.message.reply_text("❌ У вас нет доступа к использованию этого бота.")
         return
 
     try:
-        data = json.loads(update.message.web_app_data.data)
+        web_app_data = update.message.web_app_data
+        if not web_app_data:
+            logging.warning("[HANDLE_WEBAPP] web_app_data is None!")
+            await update.message.reply_text("❌ Нет данных от Web App.")
+            return
 
-        # Подставить сегодняшнюю дату, если поле пустое
+        logging.debug(f"[HANDLE_WEBAPP] web_app_data: {web_app_data.data}")
+        data = json.loads(web_app_data.data)
+
+        # Заполнение пустой даты
         if not data.get("date"):
             data["date"] = datetime.now().strftime("%d.%m.%Y")
 
-        # Подготовка путей
+        # Пути
         output_dir = os.path.join(os.path.dirname(__file__), "output")
         os.makedirs(output_dir, exist_ok=True)
 
@@ -51,14 +60,15 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         output_file = os.path.join(output_dir, f"Заявка_{date_str}.pdf")
         template_path = os.path.join(os.path.dirname(__file__), "template.pdf")
 
-        # Заполнение PDF и отправка на почту
+        # Заполнение PDF и отправка
+        logging.debug("[HANDLE_WEBAPP] Заполнение PDF...")
         fill_pdf(template_path, output_file, data)
+
+        logging.debug("[HANDLE_WEBAPP] Отправка email...")
         send_email("Заявка на пропуск", "Сформирована новая заявка", output_file)
 
-        # Сообщение отправителю
         await update.message.reply_text("✅ Заявка отправлена по почте.")
 
-        # Рассылка статуса во все ALLOWED_CHAT_IDS
         summary = (
             f"📩 <b>Заявка отправлена</b>\n\n"
             f"<b>Дата:</b> {data.get('date')}\n"
@@ -85,10 +95,10 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.send_message(chat_id=admin_id, text=summary, parse_mode="HTML")
             except Exception as e:
-                logging.error(f"Не удалось отправить сообщение {admin_id}: {e}")
+                logging.error(f"❗ Не удалось отправить сообщение {admin_id}: {e}")
 
     except Exception as e:
-        logging.exception("Ошибка при обработке данных из web app")
+        logging.exception("❌ Ошибка при обработке данных из web app")
         await update.message.reply_text("❌ Произошла ошибка при обработке заявки.")
 
 if __name__ == "__main__":
@@ -99,13 +109,15 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp))
+    app.add_handler(MessageHandler(filters.ALL, lambda update, context: logging.debug(f"[RAW UPDATE] {update}")))
 
     async def main():
         print("[DEBUG] Инициализация бота...")
         await app.initialize()
         await app.start()
         print("[DEBUG] Бот слушает сообщения...")
+        print(f"[DEBUG] USER_ID: {user_id}")
+        print(f"[DEBUG] ALLOWED_CHAT_IDS: {ALLOWED_CHAT_IDS}")
         await app.updater.start_polling()
         await app.updater.wait_until_closed()
 
