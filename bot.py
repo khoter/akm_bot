@@ -1,50 +1,59 @@
+import os
+import json
+import asyncio
+import logging
+from datetime import datetime
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
-from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS, ALLOWED_CHAT_IDS
+
+from config import BOT_TOKEN, ALLOWED_CHAT_IDS, WEBAPP_URL
 from fill_pdf import fill_pdf
 from email_sender import send_email
-from datetime import datetime
-import os
-import json
-import logging
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in ALLOWED_USER_IDS:
+    logger.debug(f"[START] user_id = {user_id}")
+
+    if user_id not in ALLOWED_CHAT_IDS:
         await update.message.reply_text("❌ У вас нет доступа к использованию этого бота.")
         return
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Открыть форму заявки", web_app=WebAppInfo(url=WEBAPP_URL))]
+        [InlineKeyboardButton("Открыть форму", web_app=WebAppInfo(url=WEBAPP_URL))]
     ])
     await update.message.reply_text("Откройте форму заявки:", reply_markup=keyboard)
 
 
-# Обработка Web App данных
 async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.effective_user.id
-        logger.info(f"[handle_webapp] Получен web_app_data от user_id={user_id}")
+    logger.debug(f"[HANDLE_WEBAPP] Пришёл update: {update}")
 
-        if user_id not in ALLOWED_USER_IDS:
+    try:
+        if not update.message:
+            logger.warning("[HANDLE_WEBAPP] ❌ Нет update.message — update НЕ содержит сообщение.")
+            return
+
+        if update.effective_user.id not in ALLOWED_CHAT_IDS:
             await update.message.reply_text("❌ У вас нет доступа к использованию этого бота.")
             return
 
-        web_app_data = update.message.web_app_data
-        if not web_app_data:
-            logger.warning("Нет данных от Web App!")
-            await update.message.reply_text("❌ Нет данных от Web App.")
+        if not update.message.web_app_data:
+            logger.warning("[HANDLE_WEBAPP] ❌ Нет web_app_data.")
+            await update.message.reply_text("❌ Данные не получены.")
             return
 
-        raw_data = web_app_data.data
-        data = json.loads(raw_data)
+        raw_data = update.message.web_app_data.data
+        logger.debug(f"[HANDLE_WEBAPP] Получены web_app_data: {raw_data}")
+
+        cleaned_data = ''.join(c for c in raw_data if c >= ' ')
+        data = json.loads(cleaned_data)
+
+        logger.debug(f"[HANDLE_WEBAPP] Распарсенные данные: {data}")
 
         if not data.get("date"):
             data["date"] = datetime.now().strftime("%d.%m.%Y")
@@ -56,13 +65,15 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         output_file = os.path.join(output_dir, f"Заявка_{date_str}.pdf")
         template_path = os.path.join(os.path.dirname(__file__), "template.pdf")
 
-        logger.debug("Заполнение PDF...")
+        logger.debug("[PDF] Начинаем заполнение PDF...")
         fill_pdf(template_path, output_file, data)
+        logger.debug(f"[PDF] PDF сохранён в {output_file}")
 
-        logger.debug("Отправка email...")
+        logger.debug("[EMAIL] Пытаемся отправить email...")
         send_email("Заявка на пропуск", "Сформирована новая заявка", output_file)
+        logger.debug("[EMAIL] Email успешно отправлен.")
 
-        await update.message.reply_text("✅ Заявка успешно отправлена по почте.")
+        await update.message.reply_text("✅ Заявка отправлена по почте.")
 
         summary = (
             f"📩 <b>Заявка отправлена</b>\n\n"
@@ -89,12 +100,14 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for admin_id in ALLOWED_CHAT_IDS:
             try:
                 await context.bot.send_message(chat_id=admin_id, text=summary, parse_mode="HTML")
+                logger.debug(f"[SEND] Отправлено сообщение в чат {admin_id}")
             except Exception as e:
-                logger.error(f"Не удалось отправить админам сообщение: {e}")
+                logger.error(f"[SEND] ❌ Ошибка при отправке сообщения {admin_id}: {e}")
 
     except Exception as e:
-        logger.exception("Ошибка при обработке web_app_data")
-        await update.message.reply_text("❌ Произошла ошибка при обработке заявки.")
+        logger.exception("❌ Ошибка в handle_webapp")
+        if update.message:
+            await update.message.reply_text("❌ Ошибка при обработке заявки.")
 
 
 if __name__ == "__main__":
@@ -102,9 +115,11 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp))
 
-    print("[DEBUG] Бот запущен...")
+    # Ловим всё подряд, чтобы точно ничего не упустить
+    app.add_handler(MessageHandler(filters.ALL, handle_webapp))
+
+    print("[DEBUG] Запускаем бота...")
     app.run_polling()
 
 
