@@ -58,9 +58,13 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         await context.bot.send_message(chat_id=chat_id, text="⛔️ У вас нет доступа к использованию формы.")
         logger.warning(f"[ACCESS DENIED] User {user_id} не в списке ALLOWED_USER_IDS")
         return
-
+    logger.debug(f"[WEB_APP] raw data: {web_app_data.data}")
     try:
-        data = json.loads(web_app_data.data)
+        try:
+            data = json.loads(web_app_data.data)
+        except json.JSONDecodeError:
+            logger.warning("[WEB_APP] Попытка двойной декодировки JSON")
+            data = json.loads(json.loads(web_app_data.data))  # ← повторный loads
         logger.debug(f"[WEB_APP] Данные успешно разобраны: {data}")
 
         os.makedirs("output", exist_ok=True)
