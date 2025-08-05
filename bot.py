@@ -10,6 +10,7 @@ from datetime import datetime
 import os
 import logging
 import json
+import asyncio
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -90,4 +91,22 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.exception("Ошибка при обработке данных из web app")
         await update.message.reply_text("❌ Произошла ошибка при обработке заявки.")
 
-   
+if __name__ == "__main__":
+    from telegram.ext import Application
+
+    print(f"[DEBUG] BOT_TOKEN: {BOT_TOKEN}")
+    
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp))
+
+    async def main():
+        print("[DEBUG] Инициализация бота...")
+        await app.initialize()
+        await app.start()
+        print("[DEBUG] Бот слушает сообщения...")
+        await app.updater.start_polling()
+        await app.updater.wait_until_closed()
+
+    asyncio.run(main())   
