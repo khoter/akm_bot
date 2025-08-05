@@ -16,6 +16,10 @@ from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS
 from fill_pdf import fill_pdf
 from email_sender import send_email
 
+# --- Сброс старых хендлеров ---
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+
 # --- Настройка логирования ---
 logging.basicConfig(
     level=logging.DEBUG,
