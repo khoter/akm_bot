@@ -19,9 +19,9 @@ WEBAPP_URL = "https://marsusya.ru/telegram-form/"
 
 # Команда /start показывает кнопку для открытия Web App
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    
-    if chat_id not in ALLOWED_CHAT_IDS:
+    user_id = update.effective_user.id
+
+    if user_id not in ALLOWED_CHAT_IDS:
         await update.message.reply_text("❌ У вас нет доступа к использованию этого бота.")
         return
 
