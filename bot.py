@@ -5,8 +5,8 @@ from datetime import datetime
 from telegram import Update, WebAppData
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-from fill_pdf import generate_pdf
-from email_sender import send_email_with_attachment
+from fill_pdf import fill_pdf
+from email_sender import send_email
 
 # --- Конфигурация ---
 TOKEN = 'YOUR_TOKEN'
@@ -39,10 +39,10 @@ async def web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{user.id}.pdf"
         filepath = os.path.join(OUTPUT_DIR, filename)
-        generate_pdf(data, filepath)
+        fill_pdf(data, filepath)
         logger.info(f"[PDF] Сохранено: {filepath}")
 
-        send_email_with_attachment(filepath, to=EMAIL_TO)
+        send_email(filepath, to=EMAIL_TO)
         logger.info(f"[EMAIL] Отправлено на {EMAIL_TO}")
 
         await update.message.reply_text("✅ Заявка получена. PDF отправлен на почту УК.")
