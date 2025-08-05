@@ -1,68 +1,68 @@
-import logging
 import json
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    filters, ContextTypes
-)
+import logging
+import tempfile
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from fill_pdf import fill_pdf
 from email_sender import send_email
 from config import BOT_TOKEN, TO_EMAIL, WEBAPP_URL, ALLOWED_USER_IDS
 
-# Логирование
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-# Команда /start — приветствие и запуск Web App
+def is_user_allowed(user_id):
+    return user_id in ALLOWED_USER_IDS
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    logger.debug(f"[START] user_id = {user_id}")
-
-    if user_id not in ALLOWED_USER_IDS:
-        await update.message.reply_text("❌ У вас нет доступа к использованию этого бота.")
+    if not is_user_allowed(user_id):
+        await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
         return
 
     keyboard = [
-        [InlineKeyboardButton("🚛 Оформить заявку", web_app={"url": WEBAPP_URL})]
+        [InlineKeyboardButton("🚋 Оформить заявку", web_app=WebAppInfo(url=WEBAPP_URL))]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
     await update.message.reply_text(
         "Добро пожаловать! Нажмите кнопку ниже, чтобы заполнить форму заявки:",
         reply_markup=reply_markup
     )
 
 
-# Обработка данных из Web App
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    logger.debug(f"[DATA RECEIVED] from {user.id}")
+    user_id = update.effective_user.id
+    logger.debug(f"[DATA RECEIVED] from {user_id}")
+
+    if not is_user_allowed(user_id):
+        await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
+        return
 
     try:
-        data = json.loads(update.message.web_app_data.data)
+        raw_data = update.message.web_app_data.data
+        data = json.loads(raw_data)
         logger.debug(f"[FORM DATA]: {data}")
 
-        pdf_bytes = fill_pdf(data)
-        send_email(pdf_bytes, TO_EMAIL)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+            fill_pdf(tmp_pdf.name, data)
+            tmp_pdf.seek(0)
+            pdf_bytes = tmp_pdf.read()
 
+        send_email(pdf_bytes, TO_EMAIL)
         await update.message.reply_text("✅ Заявка успешно отправлена!")
+
     except Exception as e:
         logger.exception("[ERROR] Ошибка при обработке данных из Web App")
         await update.message.reply_text(f"❌ Ошибка при отправке заявки: {e}")
 
 
-# Точка входа
 def main():
-    logger.debug("[BOOT] Запуск бота...")
-
     app = Application.builder().token(BOT_TOKEN).build()
-    logger.debug("[BOT] Бот слушает...")
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
-
+    app.add_handler(MessageHandler(filters.TEXT & filters.UpdateType.MESSAGE & filters.HasWebAppData(), handle_web_app_data))
     app.run_polling()
 
 
