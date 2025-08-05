@@ -14,7 +14,7 @@ import asyncio
 
 logging.basicConfig(level=logging.DEBUG)
 
-# /start
+# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -26,7 +26,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Открыть форму", web_app=WebAppInfo(url=WEBAPP_URL))]
     ])
     await update.message.reply_text("Откройте форму заявки:", reply_markup=keyboard)
-
 
 # Обработка web_app данных
 async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -41,22 +40,25 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         web_app_data = getattr(update.message, "web_app_data", None)
         if not web_app_data:
-            logging.warning("[HANDLE_WEBAPP] web_app_data отсутствует.")
+            logging.debug("[HANDLE_WEBAPP] update.message.web_app_data отсутствует.")
             return
 
         logging.debug(f"[HANDLE_WEBAPP] web_app_data: {web_app_data.data}")
         data = json.loads(web_app_data.data)
 
+        # Заполнение пустой даты
         if not data.get("date"):
             data["date"] = datetime.now().strftime("%d.%m.%Y")
 
-        # PDF
+        # Пути
         output_dir = os.path.join(os.path.dirname(__file__), "output")
         os.makedirs(output_dir, exist_ok=True)
+
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = os.path.join(output_dir, f"Заявка_{date_str}.pdf")
         template_path = os.path.join(os.path.dirname(__file__), "template.pdf")
 
+        # Заполнение PDF и отправка
         logging.debug("[HANDLE_WEBAPP] Заполнение PDF...")
         fill_pdf(template_path, output_file, data)
 
@@ -97,18 +99,19 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.exception("❌ Ошибка при обработке данных из web app")
         await update.message.reply_text("❌ Произошла ошибка при обработке заявки.")
 
+# Проверка на наличие web_app_data
+def is_webapp_data(update: Update) -> bool:
+    return bool(getattr(update.message, "web_app_data", None))
 
 if __name__ == "__main__":
-    print(f"[DEBUG] BOT_TOKEN: {BOT_TOKEN}")
+    from telegram.ext import Application
+
+    logging.debug(f"[DEBUG] BOT_TOKEN: {BOT_TOKEN}")
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-
-    # 🔧 Новый хендлер для web_app_data
-    app.add_handler(MessageHandler(
-        filters.TEXT & filters.UpdateType.MESSAGE,
-        handle_webapp
-    ))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Create(is_webapp_data), handle_webapp))
 
     async def main():
         logging.debug("[DEBUG] Инициализация бота...")
@@ -116,7 +119,8 @@ if __name__ == "__main__":
         await app.start()
         logging.debug("[DEBUG] Бот слушает сообщения...")
         await app.updater.start_polling()
-        await app.updater.wait_until_closed()
+        await app.updater.wait()
 
     asyncio.run(main())
+
  
