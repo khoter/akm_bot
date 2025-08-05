@@ -14,7 +14,7 @@ import asyncio
 
 logging.basicConfig(level=logging.DEBUG)
 
-# Команда /start
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -39,28 +39,24 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        web_app_data = update.message.web_app_data
+        web_app_data = getattr(update.message, "web_app_data", None)
         if not web_app_data:
-            logging.warning("[HANDLE_WEBAPP] web_app_data is None!")
-            await update.message.reply_text("❌ Нет данных от Web App.")
+            logging.warning("[HANDLE_WEBAPP] web_app_data отсутствует.")
             return
 
         logging.debug(f"[HANDLE_WEBAPP] web_app_data: {web_app_data.data}")
         data = json.loads(web_app_data.data)
 
-        # Заполнение пустой даты
         if not data.get("date"):
             data["date"] = datetime.now().strftime("%d.%m.%Y")
 
-        # Пути
+        # PDF
         output_dir = os.path.join(os.path.dirname(__file__), "output")
         os.makedirs(output_dir, exist_ok=True)
-
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = os.path.join(output_dir, f"Заявка_{date_str}.pdf")
         template_path = os.path.join(os.path.dirname(__file__), "template.pdf")
 
-        # Заполнение PDF и отправка
         logging.debug("[HANDLE_WEBAPP] Заполнение PDF...")
         fill_pdf(template_path, output_file, data)
 
@@ -101,24 +97,26 @@ async def handle_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.exception("❌ Ошибка при обработке данных из web app")
         await update.message.reply_text("❌ Произошла ошибка при обработке заявки.")
 
-if __name__ == "__main__":
-    from telegram.ext import Application
 
+if __name__ == "__main__":
     print(f"[DEBUG] BOT_TOKEN: {BOT_TOKEN}")
-    
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.ALL, lambda update, context: logging.debug(f"[RAW UPDATE] {update}")))
+
+    # 🔧 Новый хендлер для web_app_data
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.UpdateType.MESSAGE,
+        handle_webapp
+    ))
 
     async def main():
-        print("[DEBUG] Инициализация бота...")
+        logging.debug("[DEBUG] Инициализация бота...")
         await app.initialize()
         await app.start()
-        print("[DEBUG] Бот слушает сообщения...")
-        print(f"[DEBUG] USER_ID: {user_id}")
-        print(f"[DEBUG] ALLOWED_CHAT_IDS: {ALLOWED_CHAT_IDS}")
+        logging.debug("[DEBUG] Бот слушает сообщения...")
         await app.updater.start_polling()
         await app.updater.wait_until_closed()
 
-    asyncio.run(main())   
+    asyncio.run(main())
+ 
