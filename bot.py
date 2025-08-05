@@ -7,11 +7,12 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 from fill_pdf import fill_pdf
 from email_sender import send_email
+from config import BOT_TOKEN, TO_EMAIL
 
 # --- Конфигурация ---
-TOKEN = 'YOUR_TOKEN'
+TOKEN = BOT_TOKEN
 OUTPUT_DIR = 'output'
-EMAIL_TO = 'info.sky@iqsrv.ru'
+EMAIL_TO = TO_EMAIL
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # --- Логирование ---
