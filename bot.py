@@ -6,7 +6,7 @@ from telegram.ext import (
 from telegram.ext import ConversationHandler
 from fill_pdf import fill_pdf
 from email_sender import send_email
-from config import BOT_TOKEN, ALLOWED_CHAT_IDS
+from config import BOT_TOKEN, ALLOWED_CHAT_IDS, WEBAPP_URL
 from datetime import datetime
 import os
 import logging
