@@ -8,7 +8,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-from config import BOT_TOKEN, ALLOWED_CHAT_IDS, WEBAPP_URL
+from config import BOT_TOKEN, ALLOWED_CHAT_IDS, WEBAPP_URL, ALLOWED_USER_IDS
 from fill_pdf import fill_pdf
 from email_sender import send_email
 
@@ -20,7 +20,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.debug(f"[START] user_id = {user_id}")
 
-    if user_id not in ALLOWED_CHAT_IDS:
+    if user_id not in ALLOWED_USER_IDS:
         await update.message.reply_text("❌ У вас нет доступа к использованию этого бота.")
         return
 
