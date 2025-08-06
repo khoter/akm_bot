@@ -1,22 +1,26 @@
 import smtplib
+import logging
 from email.message import EmailMessage
-from config import SMTP_HOST, SMTP_PORT, FROM_EMAIL, EMAIL_PASSWORD, TO_EMAIL
+from config import SMTP_HOST, SMTP_PORT, SMTP_LOGIN, SMTP_PASSWORD, EMAIL_TO
 
-def send_email(subject, body, attachment_path):
+def send_email(subject: str, body: str, attachment_path: str) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"]    = SMTP_LOGIN
+    msg["To"]      = ", ".join(EMAIL_TO)
+    msg.set_content(body)
+
+    with open(attachment_path, "rb") as f:
+        msg.add_attachment(
+            f.read(),
+            maintype="application",
+            subtype="pdf",
+            filename=attachment_path.rsplit('/', 1)[-1],
+        )
+
     try:
-        msg = EmailMessage()
-        msg['Subject'] = subject
-        msg['From'] = FROM_EMAIL
-        msg['To'] = TO_EMAIL
-        msg.set_content(body)
-
-        with open(attachment_path, 'rb') as f:
-            file_data = f.read()
-            file_name = attachment_path.split('/')[-1]
-            msg.add_attachment(file_data, maintype='application', subtype='pdf', filename=file_name)
-
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
-            server.login(FROM_EMAIL, EMAIL_PASSWORD)
-            server.send_message(msg)
-    except Exception as e:
-        print(f"[ERROR] Ошибка отправки письма: {e}")
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as smtp:
+            smtp.login(SMTP_LOGIN, SMTP_PASSWORD)
+            smtp.send_message(msg)
+    except Exception as err:
+        logging.exception("Ошибка отправки письма: %s", err)

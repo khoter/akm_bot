@@ -1,29 +1,32 @@
 from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName
 
-def fill_pdf(template_path, output_path, data):
-    template_pdf = PdfReader(template_path)
-    annotations = template_pdf.pages[0].get('/Annots') or []
+YES  = PdfName('Yes')
+OFF  = PdfName('Off')
 
-    for annotation in annotations:
-        if annotation.get('/Subtype') != '/Widget' or not annotation.get('/T'):
+def fill_pdf(template_path: str, output_path: str, data: dict) -> None:
+    pdf = PdfReader(template_path)
+    annotations = pdf.pages[0].get('/Annots') or []
+
+    for annot in annotations:
+        # интересуют только поля-виджеты с именем (/T)
+        if annot.get('/Subtype') != PdfName('Widget') or not annot.get('/T'):
             continue
 
-        key_raw = annotation['/T']
-        key = key_raw.decode('utf-8') if hasattr(key_raw, 'decode') else str(key_raw)
-        key = key.strip('()')
+        # /T может быть PdfString или уже строкой
+        key_raw = annot['/T']
+        key = key_raw.to_unicode() if hasattr(key_raw, 'to_unicode') else str(key_raw)
+        key = key.strip('()')           # убираем скобки, если остались
 
-        # Текстовые поля
-        if annotation.get('/FT') == '/Tx':
-            if key in data:
-                annotation.update(PdfDict(V=str(data[key]), AP=''))
+        ft = annot.get('/FT')           # тип поля
 
-        # Чекбоксы
-        elif annotation.get('/FT') == '/Btn':
-            value = data.get(key, False)
-            checked = str(value).lower() in ['true', 'on', '1', 'yes']
-            annotation.update({
-                PdfName('V'): PdfName('Yes') if checked else PdfName('Off'),
-                PdfName('AS'): PdfName('Yes') if checked else PdfName('Off'),
-            })
+        # ───────── текстовые поля ─────────
+        if ft == PdfName('Tx') and key in data:
+            annot.update(PdfDict(V=str(data[key]), AP=''))
 
-    PdfWriter(output_path, trailer=template_pdf).write()
+        # ───────── чекбоксы ───────────────
+        elif ft == PdfName('Btn'):
+            checked = str(data.get(key, '')).lower() in {'true', 'on', '1', 'yes'}
+            state = YES if checked else OFF
+            annot.update({PdfName('V'): state, PdfName('AS'): state})
+
+    PdfWriter(output_path, trailer=pdf).write()

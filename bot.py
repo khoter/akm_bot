@@ -33,7 +33,8 @@ from logging.handlers import RotatingFileHandler
 
 from telegram import (
     Update,
-    MenuButtonWebApp,   # 👈 для персональной кнопки в меню
+    MenuButtonWebApp,
+    WebAppInfo,
 )
 from telegram.ext import (
     Application,
@@ -76,7 +77,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if user_id not in ALLOWED_USER_IDS:
         # Сбросим кнопку, если вдруг была установлена ранее
-        await context.bot.set_chat_menu_button(chat_id=chat_id, menu_button=None)
+        await context.bot.set_chat_menu_button(
+        chat_id=chat_id,
+        menu_button=MenuButtonWebApp(
+            text="📝 Оформить заявку",
+            web_app=WebAppInfo(url=WEBAPP_URL),
+        ),
+    )
         await update.message.reply_text("⛔️ У вас нет доступа к использованию формы.")
         logger.warning("[ACCESS DENIED] user %s", user_id)
         return
@@ -146,6 +153,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
