@@ -64,6 +64,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Обработка данных из Web App ---
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ⚠️ сначала убеждаемся, что это именно данные формы
+    if not (update.message and update.message.web_app_data):
+        return
     data_msg = update.message.web_app_data          # тут уже гарантировано, что он есть
     try:
         data = json.loads(data_msg.data)
@@ -97,7 +100,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
 
     # Хендлер для web_app_data
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
+    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE, handle_web_app_data))
 
     logger.info("🚀 Бот запущен...")
     app.run_polling()
