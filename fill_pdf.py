@@ -2,7 +2,7 @@ from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName
 
 def fill_pdf(template_path, output_path, data):
     template_pdf = PdfReader(template_path)
-    annotations = template_pdf.pages[0].get('/Annots', [])
+    annotations = template_pdf.pages[0].get('/Annots') or []
 
     for annotation in annotations:
         if annotation.get('/Subtype') != '/Widget' or not annotation.get('/T'):

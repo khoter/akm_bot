@@ -10,7 +10,7 @@
 config.py должен содержать:
     BOT_TOKEN = "123456:ABC…"          # токен @BotFather
     WEBAPP_URL = "https://…/index.html" # URL формы, открываемой кнопкой
-    ALLOWED_USER_IDS = {111, 222, …}    # ID, кому доступен бот
+    ALLOWED_USER_IDS = {111, 222, …}     # ID, кому доступен бот
     SMTP_HOST = "smtp.example.com"
     SMTP_PORT = 465
     SMTP_LOGIN = "bot@example.com"
@@ -31,7 +31,10 @@ import logging
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import (
+    Update,
+    MenuButtonWebApp,   # 👈 для персональной кнопки в меню
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -45,13 +48,12 @@ from fill_pdf import fill_pdf          # ваша функция генерац�
 from email_sender import send_email    # ваша функция отправки письма
 
 # ──────────────────────────── ЛОГИ ────────────────────────────────
-LOG_FORMAT = "% (asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 LOG_FILE = "bot.log"
 
 root = logging.getLogger()
 root.setLevel(logging.INFO)            # базовый уровень (консоль)
 
-# Файл‑хендлер с DEBUG + ротация (10 × 1 МБ)
 file_h = RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=10, encoding="utf-8")
 file_h.setFormatter(logging.Formatter(LOG_FORMAT))
 file_h.setLevel(logging.DEBUG)
@@ -62,36 +64,37 @@ console_h.setFormatter(logging.Formatter(LOG_FORMAT))
 console_h.setLevel(logging.INFO)
 root.addHandler(console_h)
 
-# Приглушаем «болтливые» библиотеки
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext").setLevel(logging.WARNING)
-
 logger = logging.getLogger(__name__)
 
 # ─────────────────────── ХЕНДЛЕРЫ ────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/start – показывает кнопку для запуска Web‑App"""
+    """/start – выдаёт (или убирает) кнопку Web‑App в чат‑меню"""
+    chat_id = update.effective_chat.id
     user_id = update.effective_user.id
+
     if user_id not in ALLOWED_USER_IDS:
+        # Сбросим кнопку, если вдруг была установлена ранее
+        await context.bot.set_chat_menu_button(chat_id=chat_id, menu_button=None)
         await update.message.reply_text("⛔️ У вас нет доступа к использованию формы.")
-        logger.warning("[ACCESS DENIED] User %s не в ALLOWED_USER_IDS", user_id)
+        logger.warning("[ACCESS DENIED] user %s", user_id)
         return
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 Оформить заявку", web_app={"url": WEBAPP_URL})]
-    ])
-    await update.message.reply_text(
-        "Добро пожаловать! Нажмите кнопку ниже, чтобы заполнить заявку:",
-        reply_markup=keyboard,
+    # Разрешённый пользователь – назначаем персональную Web‑App‑кнопку
+    await context.bot.set_chat_menu_button(
+        chat_id=chat_id,
+        menu_button=MenuButtonWebApp(text="📝 Оформить заявку", web_app=WEBAPP_URL),
     )
-    logger.debug("Кнопка Web‑App отправлена пользователю %s", user_id)
+
+    await update.message.reply_text(
+        "Добро пожаловать! Откройте форму через кнопку 🧩 в меню чата.")
+    logger.debug("Персональная Web‑App‑кнопка установлена для %s", user_id)
 
 
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Получаем данные из формы, генерируем PDF и отправляем письмо"""
-
-    # фильтр уже гарантирует, что web_app_data есть → просто берём
-    raw: str = update.message.web_app_data.data  # type: ignore[assignment]
+    """Получаем данные формы, генерируем PDF, отправляем письмо"""
+    raw: str = update.message.web_app_data.data  # type: ignore[attr-defined]
     logger.debug("RAW DATA: %s", raw)
 
     try:
@@ -102,20 +105,16 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     try:
-        # Путь для PDF
         os.makedirs("output", exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d%H%M%S")
         pdf_path = f"output/form_{update.effective_user.id}_{stamp}.pdf"
 
-        # Генерируем PDF
         fill_pdf("template.pdf", pdf_path, data)
 
-        # Отправляем письмо в пуле потоков (чтобы не блокировать asyncio)
         subject = f"Заявка от {data.get('person', 'неизвестно')}"
         body = "В приложении заявка, отправленная через Telegram‑бот."
         await asyncio.to_thread(send_email, subject, body, pdf_path)
 
-        # Ответ пользователю
         await update.effective_chat.send_message("✅ Заявка успешно отправлена!")
         logger.info("Заявка %s отправлена", pdf_path)
 
@@ -125,12 +124,10 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def dump(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-    """DEBUG: выводит сырые апдейты на уровень DEBUG"""
     logger.debug("UPDATE: %s", update)
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Логируем все необработанные исключения"""
     logger.exception("Exception while handling update %s", update, exc_info=context.error)
 
 
@@ -138,12 +135,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
-    # ↓ уберите, если не нужен дамп
-    application.add_handler(MessageHandler(filters.ALL, dump))
-
+    application.add_handler(MessageHandler(filters.ALL, dump))  # уберите при необходимости
     application.add_error_handler(error_handler)
 
     logger.info("🚀 Бот запущен…")
@@ -152,6 +146,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
