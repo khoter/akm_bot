@@ -1,8 +1,7 @@
 import os
 import json
-import logging
 from datetime import datetime
-
+from logging.handlers import RotatingFileHandler
 from telegram import Update, WebAppData, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     Application,
@@ -11,20 +10,36 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+import asyncio
 
 from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS
 from fill_pdf import fill_pdf
 from email_sender import send_email
 
-# --- Сброс старых хендлеров ---
-for handler in logging.root.handlers[:]:
-    logging.root.removeHandler(handler)
+import logging
 
-# --- Настройка логирования ---
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+LOG_FILE   = "bot.log"
+
+root = logging.getLogger()
+root.setLevel(logging.INFO)        # базовый уровень
+
+# Файл с ротацией
+file_h = RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=10, encoding="utf-8")
+file_h.setFormatter(logging.Formatter(LOG_FORMAT))
+file_h.setLevel(logging.DEBUG)     # подробные логи — в файл
+root.addHandler(file_h)
+
+# Коротко в консоль
+console_h = logging.StreamHandler()
+console_h.setFormatter(logging.Formatter(LOG_FORMAT))
+console_h.setLevel(logging.INFO)
+root.addHandler(console_h)
+
+# Приглушаем болтливые библиотеки
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,46 +64,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Обработка данных из Web App ---
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.web_app_data:
-        return  # Не web_app_data — пропускаем
-
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    web_app_data: WebAppData = update.message.web_app_data
-
-    logger.debug(f"[WEB_APP] Получены данные от Telegram:\n{web_app_data.data}")
-
-    if user_id not in ALLOWED_USER_IDS:
-        await context.bot.send_message(chat_id=chat_id, text="⛔️ У вас нет доступа к использованию формы.")
-        logger.warning(f"[ACCESS DENIED] User {user_id} не в списке ALLOWED_USER_IDS")
-        return
-    logger.debug(f"[WEB_APP] raw data: {web_app_data.data}")
+    data_msg = update.message.web_app_data          # тут уже гарантировано, что он есть
     try:
-        try:
-            data = json.loads(web_app_data.data)
-        except json.JSONDecodeError:
-            logger.warning("[WEB_APP] Попытка двойной декодировки JSON")
-            data = json.loads(json.loads(web_app_data.data))  # ← повторный loads
-        logger.debug(f"[WEB_APP] Данные успешно разобраны: {data}")
+        data = json.loads(data_msg.data)
+    except json.JSONDecodeError as e:
+        logger.error("Не удалось разобрать JSON: %s", e)
+        await update.effective_chat.send_message("⚠️ Неверный формат данных формы.")
+        return
 
+    # PDF + письмо в отдельном потоке, чтобы не блокировать event-loop
+    try:
         os.makedirs("output", exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        output_path = f"output/form_{user_id}_{timestamp}.pdf"
+        stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        pdf_path = f"output/form_{update.effective_user.id}_{stamp}.pdf"
+        fill_pdf("template.pdf", pdf_path, data)
 
-        fill_pdf("template.pdf", output_path, data)
-        logger.info(f"[PDF] Файл заявки создан: {output_path}")
-
-        subject = f"Заявка от {data.get('person', 'неизвестно')}"
-        body = "В приложении заявка, отправленная через Telegram-бот."
-
-        send_email(subject, body, output_path)
-        logger.info(f"[EMAIL] Заявка отправлена на {output_path}")
-
-        await context.bot.send_message(chat_id=chat_id, text="✅ Заявка успешно отправлена!")
-
-    except Exception as e:
-        logger.exception("[ERROR] Ошибка при обработке заявки:")
-        await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка при отправке: {e}")
+        await asyncio.to_thread(send_email,
+                                f"Заявка от {data.get('person','неизвестно')}",
+                                "В приложении заявка, отправленная через Telegram-бот.",
+                                pdf_path)
+        await update.effective_chat.send_message("✅ Заявка успешно отправлена!")
+        logger.info("Заявка %s отправлена", pdf_path)
+    except Exception:
+        logger.exception("Ошибка при обработке заявки")
+        await update.effective_chat.send_message("❌ Не удалось отправить заявку.")
 
 
 # --- Главная функция ---
@@ -98,7 +97,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
 
     # Хендлер для web_app_data
-    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE, handle_web_app_data))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
 
     logger.info("🚀 Бот запущен...")
     app.run_polling()
