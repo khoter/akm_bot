@@ -146,14 +146,15 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"• Груз: {data.get('cargo')} × {data.get('cargo_count')}\n"
             f"• Сотрудник: {data.get('person')}\n"
         )
-        await context.bot.send_document(
-            chat_id=REPORT_CHAT_ID,
-            message_thread_id=REPORT_TOPIC_ID,
-            document=open(pdf_path, "rb"),
-            filename=os.path.basename(pdf_path),
-            caption=text,
-            parse_mode="Markdown",
-        )
+        with open(pdf_path, "rb") as f:
+            await context.bot.send_document(
+                chat_id=REPORT_CHAT_ID,
+                message_thread_id=REPORT_TOPIC_ID,
+                document= f,
+                filename=os.path.basename(pdf_path),
+                caption=text,
+                parse_mode="Markdown",
+            )
     except Exception as exc:
         logger.error("Не удалось отправить отчёт в чат: %s", exc)
 
@@ -198,7 +199,7 @@ async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     await bot.send_message(chat_id=STATUS_CHAT_ID, message_thread_id=STATUS_TOPIC_ID, text=msg, parse_mode='Markdown')
 
 # ────────────────────────── main ───────────────────────────
-async def main_async():
+def main():
     app = Application.builder().token(BOT_TOKEN).post_init(on_startup).build()
 
     root.addHandler(TelegramErrorHandler(app.bot, STATUS_CHAT_ID, STATUS_TOPIC_ID))
@@ -213,7 +214,7 @@ async def main_async():
     # heartbeat job (5 мин = 300 с)
     app.job_queue.run_repeating(heartbeat, interval=300, first=0, data={"start": START_TIME})
 
-    await app.run_polling()
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main_async())
+    main()
