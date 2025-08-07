@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os, json, asyncio, logging, time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from logging.handlers import RotatingFileHandler
 
 from telegram import Update, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
@@ -19,7 +20,8 @@ from email_sender import send_email
 
 START_BTN = "🚀 Начать"
 FORM_BTN  = "📝 Оформить заявку"
-START_TIME = datetime.now(timezone.utc)
+
+START_TIME = datetime.now(ZoneInfo("Europe/Moscow"))
 
 # ────────────────────────── ЛОГИ ────────────────────────────
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
