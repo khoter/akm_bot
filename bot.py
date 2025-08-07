@@ -10,7 +10,7 @@ from logging.handlers import RotatingFileHandler
 
 from telegram import Update, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters
+    Application, CommandHandler, MessageHandler, ContextTypes, filters, idle
 )
 
 from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS, REPORT_CHAT_ID, REPORT_TOPIC_ID, STATUS_CHAT_ID, STATUS_TOPIC_ID
@@ -191,36 +191,38 @@ async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     await bot.send_message(chat_id=STATUS_CHAT_ID, message_thread_id=STATUS_TOPIC_ID, text=msg, parse_mode='Markdown')
 
 # ────────────────────────── main ───────────────────────────
-async def main_async() -> None:
+async def main_async():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    root.addHandler(TelegramErrorHandler(app.bot, STATUS_CHAT_ID, STATUS_TOPIC_ID)) 
+    root.addHandler(TelegramErrorHandler(app.bot, STATUS_CHAT_ID, STATUS_TOPIC_ID))
 
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{STOP_BTN}$"), handle_stop))
+    # handlers …
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{START_BTN}$"), handle_start_button))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{STOP_BTN}$"),  handle_stop))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
-    app.add_handler(MessageHandler(filters.ALL, dump))  
     app.add_error_handler(error_handler)
-    
-    # 🫀 job-пульс раз в минуту
-    app.job_queue.run_repeating(
-        heartbeat,
-        interval=300,
-        first=0,
-        data={"start": START_TIME}, 
-    )
-    
-    # сообщение о запуске
+
+    # heartbeat job (5 мин = 300 с)
+    app.job_queue.run_repeating(heartbeat, interval=300, first=0, data={"start": START_TIME})
+
+    # — запуск —
+    await app.initialize()
+    await app.start()
+
+    # сообщение о старте
     await app.bot.send_message(
-        chat_id=STATUS_CHAT_ID, 
-        message_thread_id=STATUS_TOPIC_ID, 
-        text='✅ Бот *запущен*', 
-        parse_mode='Markdown')
-    logger.info("🚀 Бот запущен…"
+        STATUS_CHAT_ID, STATUS_TOPIC_ID,
+        "✅ Бот *запущен*", parse_mode="Markdown"
     )
-    
-    await app.run_polling()
+    logger.info("🚀 Бот запущен…")
+
+    # ждём Ctrl-C или handle_stop()
+    await idle()
+
+    # — корректное выключение —
+    await app.stop()
+    await app.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(main_async())
