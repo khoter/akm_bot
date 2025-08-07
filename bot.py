@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-import os, json, asyncio, logging, time
+import os, json, asyncio, logging, time, sys
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 
@@ -51,6 +51,9 @@ class TelegramErrorHandler(logging.Handler):
         self.thread_id = thread_id
 
     def emit(self, record: logging.LogRecord):
+        if not getattr(self.app, "running", False):
+            return
+
         msg = self.format(record)
 
         async def _send():
@@ -66,7 +69,7 @@ class TelegramErrorHandler(logging.Handler):
 
         try:
             self.app.create_task(_send())
-        except RuntimeError:
+        except Exception:
             pass
 
 # ────────────────────────── ФУНКЦИИ ────────────────────────────
@@ -87,22 +90,39 @@ async def on_startup(app: Application):
 async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
+    try:
+        await context.bot.send_message(
+            chat_id=STATUS_CHAT_ID,
+            message_thread_id=STATUS_TOPIC_ID,
+            text="⏹ Бот остановлен *админом*",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
 
-    await context.bot.send_message(
-        chat_id=STATUS_CHAT_ID,
-        message_thread_id=STATUS_TOPIC_ID,
-        text="⏹ Бот остановлен *админом*",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text("⏹ Останавливаюсь…", reply_markup=ReplyKeyboardRemove())
+    logger.warning("Bot stopped by admin %s", ADMIN_ID)
 
     for h in list(root.handlers):
         if isinstance(h, TelegramErrorHandler):
             root.removeHandler(h)
+            try:
+                h.close()
+            except Exception:
+                pass
+    
+    context.application.create_task(_graceful_shutdown(context.application))
 
-    await update.message.reply_text("⏹ Останавливаюсь…", reply_markup=ReplyKeyboardRemove())
-    logger.warning("Bot stopped by admin %s", ADMIN_ID)
-    await asyncio.sleep(0.5)
-    await context.application.stop()
+    async def _graceful_shutdown(app: Application):
+        try:
+            if app.job_queue:
+                app.job_queue.stop()  
+        except Exception:
+            pass
+
+        await app.stop()
+        await app.shutdown()
+        sys.exit(0)  
 
 # ────────────────────────── КЛАВИАТУРЫ ───────────────────────
 START_KB = ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
@@ -132,7 +152,7 @@ async def handle_start_button(update: Update, _: ContextTypes.DEFAULT_TYPE):
     logger.debug("Menu shown to %s", user_id)
 
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    raw = update.message.web_app_data.data  # type: ignore[attr-defined]
+    raw = update.message.web_app_data.data  
     logger.debug("RAW DATA: %s", raw)
     
     try:
@@ -145,7 +165,7 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     if 'date' in data:
         try:
             d = datetime.strptime(data['date'], '%Y-%m-%d')
-            data['date'] = d.strftime('%d.%m.%Y')    # 07.08.2025
+            data['date'] = d.strftime('%d.%m.%Y')    
         except ValueError:
             pass
     
@@ -217,14 +237,12 @@ def main():
     tg_handler = TelegramErrorHandler(app, STATUS_CHAT_ID, STATUS_TOPIC_ID)
     root.addHandler(tg_handler)
 
-    # handlers …
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{START_BTN}$"), handle_start_button))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{STOP_BTN}$"),  handle_stop))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_error_handler(error_handler)
 
-    # heartbeat job (5 мин = 300 с)
     app.job_queue.run_repeating(heartbeat, interval=300, first=0, data={"start": START_TIME})
 
     app.run_polling()
