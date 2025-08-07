@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import os, json, asyncio, logging, time
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 from logging.handlers import RotatingFileHandler
 
 from telegram import Update, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
@@ -20,6 +19,9 @@ from email_sender import send_email
 
 START_BTN = "🚀 Начать"
 FORM_BTN  = "📝 Оформить заявку"
+STOP_BTN  = "🛑 Остановить бота"
+
+ADMIN_ID = ALLOWED_USER_IDS[0]
 
 START_TIME = datetime.now(timezone.utc)
 
@@ -62,19 +64,21 @@ class TelegramErrorHandler(logging.Handler):
         except Exception:  #
             pass
 
+# ────────────────────────── ФУНКЦИИ ────────────────────────────
+def build_menu_kb(user_id: int) -> ReplyKeyboardMarkup:
+    buttons = [[KeyboardButton(FORM_BTN, web_app=WebAppInfo(url=WEBAPP_URL))]]
+    if user_id == ADMIN_ID:
+        buttons.append([STOP_BTN])                   
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+
 # ────────────────────────── КЛАВИАТУРЫ ───────────────────────
 START_KB = ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
-MENU_KB = ReplyKeyboardMarkup(
-    [[KeyboardButton(text=FORM_BTN, web_app=WebAppInfo(url=WEBAPP_URL))]],
-    resize_keyboard=True,
-)
 
 # ─────────────────────── ХЕНДЛЕРЫ ──────────────────────────
 async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Добро пожаловать! Нажмите кнопку, чтобы начать.", reply_markup=START_KB
     )
-
 
 async def handle_start_button(update: Update, _: ContextTypes.DEFAULT_TYPE):
     if update.message.text != START_BTN:
@@ -88,9 +92,11 @@ async def handle_start_button(update: Update, _: ContextTypes.DEFAULT_TYPE):
         logger.warning("[ACCESS DENIED] %s", user_id)
         return
 
-    await update.message.reply_text("Выберите действие:", reply_markup=MENU_KB)
+    await update.message.reply_text(
+    "Выберите действие:",
+    reply_markup=build_menu_kb(user_id)
+    )
     logger.debug("Menu shown to %s", user_id)
-
 
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     raw = update.message.web_app_data.data  # type: ignore[attr-defined]
@@ -144,14 +150,19 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as exc:
         logger.error("Не удалось отправить отчёт в чат: %s", exc)
 
+async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return                                    
+    await update.message.reply_text("⏹ Останавливаюсь…", reply_markup=ReplyKeyboardRemove())
+    logger.warning("Bot stopped by admin %s", ADMIN_ID)
+    await asyncio.sleep(1)
+    await context.application.stop()
 
 async def dump(update: Update, _: ContextTypes.DEFAULT_TYPE):
     logger.debug("UPDATE: %s", update)
 
-
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.exception("Exception while handling update %s", update, exc_info=context.error)
-
 
 # ────────────────────────── HEARTBEAT ──────────────────────────
 async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
@@ -173,30 +184,29 @@ async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     )
     await bot.send_message(chat_id=STATUS_CHAT_ID, message_thread_id=STATUS_TOPIC_ID, text=msg, parse_mode='Markdown')
 
-
 # ────────────────────────── main ───────────────────────────
 def main() -> None:
     app = Application.builder().token(BOT_TOKEN).build()
 
     root.addHandler(TelegramErrorHandler(app.bot, STATUS_CHAT_ID, STATUS_TOPIC_ID)) 
 
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{STOP_BTN}$"), handle_stop))
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{START_BTN}$"), handle_start_button))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_handler(MessageHandler(filters.ALL, dump))  
     app.add_error_handler(error_handler)
     
-        # 🫀 job-пульс раз в минуту
+    # 🫀 job-пульс раз в минуту
     app.job_queue.run_repeating(
         heartbeat,
-        interval=60,
+        interval=300,
         first=0,
-        data={"start": START_TIME},      # передаём время запуска
+        data={"start": START_TIME}, 
     )
 
     logger.info("🚀 Бот запущен…")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
