@@ -4,8 +4,8 @@
 """
 from __future__ import annotations
 
-import os, json, asyncio, logging, time, sys
-from datetime import datetime, timezone
+import os, json, asyncio, logging
+from datetime import datetime, timezone, time
 from logging.handlers import RotatingFileHandler
 
 from telegram import Update, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
@@ -17,6 +17,7 @@ from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS, REPORT_CHAT_ID, REPO
 from fill_pdf import fill_pdf
 from email_sender import send_email
 
+# ────────────────────────── КОНСТАНТЫ ────────────────────────────
 START_BTN = "🚀 Начать"
 FORM_BTN  = "📝 Оформить заявку"
 STOP_BTN  = "🛑 Остановить бота"
@@ -24,6 +25,10 @@ STOP_BTN  = "🛑 Остановить бота"
 ADMIN_ID = ALLOWED_USER_IDS[0]
 
 START_TIME = datetime.now(timezone.utc)
+
+PDF_PATH     = "output/form_latest.pdf"           
+PDF_TMP_PATH = "output/.form_latest.tmp.pdf"      
+PDF_LOCK     = asyncio.Lock() 
 
 # ────────────────────────── ЛОГИ ────────────────────────────
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
@@ -80,58 +85,15 @@ def build_menu_kb(user_id: int) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 async def on_startup(app: Application):
-    await app.bot.send_message(
-        chat_id=STATUS_CHAT_ID,
-        message_thread_id=STATUS_TOPIC_ID,
-        text="✅ Бот *запущен*",
-        parse_mode="Markdown",
-    )
-
-async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
     try:
-        await context.bot.send_message(
+        await app.bot.send_message(
             chat_id=STATUS_CHAT_ID,
             message_thread_id=STATUS_TOPIC_ID,
-            text="⏹ Бот остановлен *админом*",
+            text="✅ Бот *запущен*",
             parse_mode="Markdown",
         )
-    except Exception:
-        pass
-
-    await update.message.reply_text("⏹ Останавливаюсь…", reply_markup=ReplyKeyboardRemove())
-    logger.warning("Bot stopped by admin %s", ADMIN_ID)
-
-    for h in list(root.handlers):
-        if isinstance(h, TelegramErrorHandler):
-            root.removeHandler(h)
-            try:
-                h.close()
-            except Exception:
-                pass
-
-    try:
-        if context.application.job_queue:
-            context.application.job_queue.scheduler.remove_all_jobs()
-            context.application.job_queue.stop()
-    except Exception:
-        pass
-
-    context.application.stop_running()
-    await context.application.stop()
-
-    async def _graceful_shutdown(app: Application):
-        try:
-            if app.job_queue:
-                app.job_queue.stop()  
-        except Exception:
-            pass
-
-        await app.stop()
-        await app.shutdown()
-        sys.exit(0)  
+    except Exception as e:
+        logger.error("Не удалось отправить стартовое сообщение: %s", e)
 
 # ────────────────────────── КЛАВИАТУРЫ ───────────────────────
 START_KB = ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
@@ -180,13 +142,17 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     try:
         os.makedirs("output", exist_ok=True)
-        pdf_path = f"output/form_{update.effective_user.id}_{datetime.now():%Y%m%d%H%M%S}.pdf"
-        fill_pdf("template.pdf", pdf_path, data)
-        subject = f"Заявка на пропуск от ООО \"АК Микротех\""
-        body    = "Здравствуйте! \n К данному письму прилагается заявка на пропуск для транспортного средства!"
-        await asyncio.to_thread(send_email, subject, body, pdf_path)
+
+        async with PDF_LOCK:
+            fill_pdf("template.pdf", PDF_TMP_PATH, data)
+            os.replace(PDF_TMP_PATH, PDF_PATH)
+        
+        subject = 'Заявка на пропуск от ООО "АК Микротех"'
+        body    = "Здравствуйте!\nК данному письму прилагается заявка на пропуск для транспортного средства."
+
+        await asyncio.to_thread(send_email, subject, body, PDF_PATH)
         await update.effective_chat.send_message("✅ Заявка успешно отправлена!")
-        logger.info("Заявка %s отправлена", pdf_path)
+        logger.info("Заявка сохранена в %s и отправлена", PDF_PATH)
     except Exception as exc:
         logger.exception("Ошибка обработки заявки: %s", exc)
         await update.effective_chat.send_message("❌ Не удалось отправить заявку.")
@@ -201,12 +167,12 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"• Груз: {data.get('cargo')} × {data.get('cargo_count')}\n"
             f"• Сотрудник: {data.get('person')}\n"
         )
-        with open(pdf_path, "rb") as f:
+        with open(PDF_PATH, "rb") as f:
             await context.bot.send_document(
                 chat_id=REPORT_CHAT_ID,
                 message_thread_id=REPORT_TOPIC_ID,
                 document= f,
-                filename=os.path.basename(pdf_path),
+                filename=os.path.basename(PDF_PATH),
                 caption=text,
                 parse_mode="Markdown",
             )
@@ -218,6 +184,40 @@ async def dump(update: Update, _: ContextTypes.DEFAULT_TYPE):
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.exception("Exception while handling update %s", update, exc_info=context.error)
+
+async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    try:
+        await context.bot.send_message(
+            chat_id=STATUS_CHAT_ID,
+            message_thread_id=STATUS_TOPIC_ID,
+            text="⏹ Бот остановлен *админом*",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+    await update.message.reply_text("⏹ Останавливаюсь…", reply_markup=ReplyKeyboardRemove())
+    logger.warning("Bot stopped by admin %s", ADMIN_ID)
+
+    for h in list(root.handlers):
+        if isinstance(h, TelegramErrorHandler):
+            root.removeHandler(h)
+            try:
+                h.close()
+            except Exception:
+                pass
+
+    try:
+        jq = context.application.job_queue
+        if jq:
+            await jq.stop()
+    except Exception:
+        pass
+
+    context.application.stop_running()
 
 # ────────────────────────── HEARTBEAT ──────────────────────────
 async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
@@ -244,6 +244,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(on_startup).build()
 
     tg_handler = TelegramErrorHandler(app, STATUS_CHAT_ID, STATUS_TOPIC_ID)
+    tg_handler.setFormatter(logging.Formatter(LOG_FORMAT))
     root.addHandler(tg_handler)
 
     app.add_handler(CommandHandler("start", cmd_start))
