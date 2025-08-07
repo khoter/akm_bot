@@ -13,7 +13,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS, REPORT_CHAT_ID, REPORT_TOPIC_ID
+from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS, REPORT_CHAT_ID, REPORT_TOPIC_ID, STATUS_CHAT_ID, STATUS_TOPIC_ID
 from fill_pdf import fill_pdf
 from email_sender import send_email
 
@@ -36,6 +36,28 @@ root.addHandler(console_h)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+
+# ────────────────────────── ЛОГИ В ТГ ──────────────────────────
+class TelegramErrorHandler(logging.Handler):
+    def __init__(self, bot, chat_id: int, thread_id: int | None = None):
+        super().__init__(logging.ERROR)
+        self.bot = bot
+        self.chat_id = chat_id
+        self.thread_id = thread_id
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            msg = self.format(record)
+            asyncio.create_task(
+                self.bot.send_message(
+                    chat_id=self.chat_id,
+                    message_thread_id=self.thread_id,
+                    text=f"❌ *ERROR*\n```{msg}```",
+                    parse_mode="Markdown"
+                )
+            )
+        except Exception:  #
+            pass
 
 # ────────────────────────── КЛАВИАТУРЫ ───────────────────────
 START_KB = ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
@@ -128,9 +150,32 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.exception("Exception while handling update %s", update, exc_info=context.error)
 
 
+# ────────────────────────── HEARTBEAT ──────────────────────────
+async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
+    bot = context.bot
+    start = context.job.data['start']
+    uptime = datetime.utcnow() - start
+
+    # ping
+    t0 = time.perf_counter()
+    await bot.get_me()
+    ping_ms = int((time.perf_counter() - t0) * 1000)
+
+    msg = (
+        "🟢 *Бот жив*\n"
+        f"Start: `{start.strftime('%d.%m.%Y %H:%M:%S')} UTC`\n"
+        f"Uptime: `{str(uptime).split('.')[0]}`\n"
+        f"Ping: `{ping_ms} ms`"
+    )
+    await bot.send_message(chat_id=STATUS_CHAT_ID, message_thread_id=STATUS_TOPIC_ID, text=msg, parse_mode='Markdown')
+
+
 # ────────────────────────── main ───────────────────────────
 def main() -> None:
     app = Application.builder().token(BOT_TOKEN).build()
+
+    root.addHandler(TelegramErrorHandler(app.bot, STATUS_CHAT_ID, STATUS_TOPIC_ID)) 
+
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{START_BTN}$"), handle_start_button))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
