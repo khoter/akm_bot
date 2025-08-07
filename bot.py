@@ -71,20 +71,20 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     raw = update.message.web_app_data.data  # type: ignore[attr-defined]
     logger.debug("RAW DATA: %s", raw)
     
-    if 'date' in data:
-        try:
-            d = datetime.strptime(data['date'], '%Y-%m-%d')
-            data['date'] = d.strftime('%d.%m.%Y')    # 07.08.2025
-        except ValueError:
-            pass
-
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         logger.error("Неверный JSON: %s", exc)
         await update.effective_chat.send_message("⚠️ Не удалось прочитать данные формы.")
         return
-
+    
+    if 'date' in data:
+        try:
+            d = datetime.strptime(data['date'], '%Y-%m-%d')
+            data['date'] = d.strftime('%d.%m.%Y')    # 07.08.2025
+        except ValueError:
+            pass
+    
     try:
         os.makedirs("output", exist_ok=True)
         pdf_path = f"output/form_{update.effective_user.id}_{datetime.now():%Y%m%d%H%M%S}.pdf"
