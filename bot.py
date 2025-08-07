@@ -90,6 +90,7 @@ async def on_startup(app: Application):
 async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
+
     try:
         await context.bot.send_message(
             chat_id=STATUS_CHAT_ID,
@@ -110,8 +111,16 @@ async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 h.close()
             except Exception:
                 pass
-    
-    context.application.create_task(_graceful_shutdown(context.application))
+
+    try:
+        if context.application.job_queue:
+            context.application.job_queue.scheduler.remove_all_jobs()
+            context.application.job_queue.stop()
+    except Exception:
+        pass
+
+    context.application.stop_running()
+    await context.application.stop()
 
     async def _graceful_shutdown(app: Application):
         try:
