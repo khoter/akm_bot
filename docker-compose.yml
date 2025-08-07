@@ -1,0 +1,17 @@
+services:
+  akm-bot:
+    build: .
+    image: akm-bot:latest
+    container_name: akm-bot
+    restart: on-failure    
+    env_file:
+      - .env               
+    volumes:
+      - ./output:/app/output  
+      - ./bot.log:/app/bot.log
+    
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

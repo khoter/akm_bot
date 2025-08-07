@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os, json, asyncio, logging
 from datetime import datetime, timezone, time
+from time import perf_counter
 from logging.handlers import RotatingFileHandler
 
 from telegram import Update, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
@@ -227,9 +228,9 @@ async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     uptime = now - start
 
     # ping
-    t0 = time.perf_counter()
+    t0 = perf_counter()
     await bot.get_me()
-    ping_ms = int((time.perf_counter() - t0) * 1000)
+    ping_ms = int((perf_counter() - t0) * 1000)
 
     msg = (
         "🟢 *Бот жив*\n"
