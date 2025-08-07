@@ -8,7 +8,7 @@ import os, json, asyncio, logging
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
-from telegram import Update, MenuButtonWebApp, WebAppInfo
+from telegram import Update, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ContextTypes, filters
 )
@@ -16,6 +16,9 @@ from telegram.ext import (
 from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS
 from fill_pdf import fill_pdf
 from email_sender import send_email
+
+START_BTN = "🚀 Начать"
+FORM_BTN  = "📝 Оформить заявку"
 
 # ────────────────────────── ЛОГИ ────────────────────────────
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
@@ -34,29 +37,34 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+# ────────────────────────── КЛАВИАТУРЫ ───────────────────────
+START_KB = ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
+MENU_KB = ReplyKeyboardMarkup(
+    [[KeyboardButton(text=FORM_BTN, web_app=WebAppInfo(url=WEBAPP_URL))]],
+    resize_keyboard=True,
+)
+
 # ─────────────────────── ХЕНДЛЕРЫ ──────────────────────────
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Устанавливаем (или убираем) кнопку Web‑App в меню чата"""
-    chat_id = update.effective_chat.id
+async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Добро пожаловать! Нажмите кнопку, чтобы начать.", reply_markup=START_KB
+    )
+
+
+async def handle_start_button(update: Update, _: ContextTypes.DEFAULT_TYPE):
+    if update.message.text != START_BTN:
+        return
     user_id = update.effective_user.id
 
     if user_id not in ALLOWED_USER_IDS:
-        # сбрасываем кнопку на дефолтное меню
-        await context.bot.set_chat_menu_button(chat_id=chat_id, menu_button=None)
-        await update.message.reply_text("⛔️ У вас нет доступа к использованию формы.")
-        logger.warning("[ACCESS DENIED] user %s", user_id)
+        await update.message.reply_text(
+            "⛔️ У вас нет доступа.", reply_markup=ReplyKeyboardRemove()
+        )
+        logger.warning("[ACCESS DENIED] %s", user_id)
         return
 
-    # разрешённый пользователь — персональная кнопка
-    await context.bot.set_chat_menu_button(
-        chat_id=chat_id,
-        menu_button=MenuButtonWebApp(
-            text="📝 Оформить заявку",
-            web_app=WebAppInfo(url=WEBAPP_URL),
-        ),
-    )
-    await update.message.reply_text("Добро пожаловать! Откройте форму через кнопку 🧩 в меню чата.")
-    logger.debug("Web‑App‑кнопка установлена для %s", user_id)
+    await update.message.reply_text("Выберите действие:", reply_markup=MENU_KB)
+    logger.debug("Menu shown to %s", user_id)
 
 
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -74,8 +82,8 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         os.makedirs("output", exist_ok=True)
         pdf_path = f"output/form_{update.effective_user.id}_{datetime.now():%Y%m%d%H%M%S}.pdf"
         fill_pdf("template.pdf", pdf_path, data)
-        subject = f"Заявка от {data.get('person', 'неизвестно')}"
-        body    = "В приложении заявка, отправленная через Telegram‑бот."
+        subject = f"Заявка на пропуск от ООО \"АК Микротех\""
+        body    = "Здравствуйте! \n К данному письму прилагается заявка на пропуск для транспортного средства!"
         await asyncio.to_thread(send_email, subject, body, pdf_path)
         await update.effective_chat.send_message("✅ Заявка успешно отправлена!")
         logger.info("Заявка %s отправлена", pdf_path)
@@ -95,9 +103,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # ────────────────────────── main ───────────────────────────
 def main() -> None:
     app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{START_BTN}$"), handle_start_button))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
-    app.add_handler(MessageHandler(filters.ALL, dump))  # уберите, если не нужен дамп
+    app.add_handler(MessageHandler(filters.ALL, dump))  
     app.add_error_handler(error_handler)
     logger.info("🚀 Бот запущен…")
     app.run_polling()
