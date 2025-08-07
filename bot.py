@@ -10,7 +10,7 @@ from logging.handlers import RotatingFileHandler
 
 from telegram import Update, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters, idle
+    Application, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
 from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS, REPORT_CHAT_ID, REPORT_TOPIC_ID, STATUS_CHAT_ID, STATUS_TOPIC_ID
@@ -71,6 +71,13 @@ def build_menu_kb(user_id: int) -> ReplyKeyboardMarkup:
         buttons.append([STOP_BTN])                   
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
+async def on_startup(app: Application):
+    await app.bot.send_message(
+        chat_id=STATUS_CHAT_ID,
+        message_thread_id=STATUS_TOPIC_ID,
+        text="✅ Бот *запущен*",
+        parse_mode="Markdown",
+    )
 # ────────────────────────── КЛАВИАТУРЫ ───────────────────────
 START_KB = ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
 
@@ -192,7 +199,7 @@ async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
 
 # ────────────────────────── main ───────────────────────────
 async def main_async():
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(on_startup).build()
 
     root.addHandler(TelegramErrorHandler(app.bot, STATUS_CHAT_ID, STATUS_TOPIC_ID))
 
@@ -206,35 +213,7 @@ async def main_async():
     # heartbeat job (5 мин = 300 с)
     app.job_queue.run_repeating(heartbeat, interval=300, first=0, data={"start": START_TIME})
 
-    # — запуск —
-    await app.initialize()
-    await app.start()
-
-    # сообщение о старте
-    await app.bot.send_message(
-        STATUS_CHAT_ID, STATUS_TOPIC_ID,
-        "✅ Бот *запущен*", parse_mode="Markdown"
-    )
-    logger.info("🚀 Бот запущен…")
-
-    # ждём Ctrl-C или handle_stop()
-    await idle()
-
-    # — корректное выключение —
-    await app.stop()
-    await app.shutdown()
+    await app.run_polling()
 
 if __name__ == "__main__":
     asyncio.run(main_async())
-
-
-
-
-
-
-
-
-
-
-
- 
