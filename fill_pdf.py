@@ -25,9 +25,24 @@ def fill_pdf(template_path: str, output_path: str, data: dict) -> None:
             elif ft == PdfName("Btn"):
                 checked = str(data.get(key, "")).lower() in {"true", "on", "1", "yes"}
                 state = YES if checked else OFF
-                annot.update({PdfName("V"): state, PdfName("AS"): state})
-                if '/AP' in annot:                          # 👈 сбросим старый вид
-                    del annot['/AP']
+                if '/AP' not in annot:
+                    # квадратик для Off
+                    off_appearance = PdfDict(
+                        N=PdfDict(Off=PdfDict(
+                            Type=PdfName('XObject'), Subtype=PdfName('Form'),
+                            BBox='0 0 20 20', Resources=PdfDict()))
+                    )
+                     # галочка (ZapfDingbats, символ 4)
+                    yes_appearance = PdfDict(
+                        Type=PdfName('XObject'), Subtype=PdfName('Form'),
+                        BBox='0 0 20 20',
+                        Resources=PdfDict(ProcSet=[PdfName('PDF')]),
+                        stream='q BT /ZaDb 18 Tf 3 3 Td (\x4) Tj ET Q'
+                    )
+                    off_appearance.N.Yes = yes_appearance
+                    annot.AP = off_appearance
+
+                annot.update({PdfName('V'): state, PdfName('AS'): state})
 
     # заставляем ридер отрисовать новые значения
     acro = pdf.Root.AcroForm
