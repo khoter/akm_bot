@@ -37,7 +37,7 @@ def fill_pdf(template_path: str, output_path: str, data: dict) -> None:
                         Type=PdfName('XObject'), Subtype=PdfName('Form'),
                         BBox='0 0 20 20',
                         Resources=PdfDict(ProcSet=[PdfName('PDF')]),
-                        stream='q BT /ZaDb 18 Tf 3 3 Td (\x4) Tj ET Q'
+                        stream=b'q BT /ZaDb 18 Tf 3 3 Td (\x04) Tj ET Q'
                     )
                     off_appearance.N.Yes = yes_appearance
                     annot.AP = off_appearance
