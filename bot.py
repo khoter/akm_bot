@@ -155,6 +155,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 # ────────────────────────── HEARTBEAT ──────────────────────────
 async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
+    bot = context.bot 
     start = context.job.data["start"]
     now   = datetime.now(timezone.utc)
     uptime = now - start
