@@ -44,24 +44,29 @@ logger = logging.getLogger(__name__)
 
 # ────────────────────────── ЛОГИ В ТГ ──────────────────────────
 class TelegramErrorHandler(logging.Handler):
-    def __init__(self, bot, chat_id: int, thread_id: int | None = None):
+    def __init__(self, app, chat_id: int, thread_id: int | None = None):
         super().__init__(logging.ERROR)
-        self.bot = bot
+        self.app = app
         self.chat_id = chat_id
         self.thread_id = thread_id
 
     def emit(self, record: logging.LogRecord):
-        try:
-            msg = self.format(record)
-            asyncio.create_task(
-                self.bot.send_message(
+        msg = self.format(record)
+
+        async def _send():
+            try:
+                await self.app.bot.send_message(
                     chat_id=self.chat_id,
                     message_thread_id=self.thread_id,
                     text=f"❌ *ERROR*\n```{msg}```",
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
                 )
-            )
-        except Exception:  #
+            except Exception:
+                pass
+
+        try:
+            self.app.create_task(_send())
+        except RuntimeError:
             pass
 
 # ────────────────────────── ФУНКЦИИ ────────────────────────────
@@ -78,6 +83,27 @@ async def on_startup(app: Application):
         text="✅ Бот *запущен*",
         parse_mode="Markdown",
     )
+
+async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    await context.bot.send_message(
+        chat_id=STATUS_CHAT_ID,
+        message_thread_id=STATUS_TOPIC_ID,
+        text="⏹ Бот остановлен *админом*",
+        parse_mode="Markdown",
+    )
+
+    for h in list(root.handlers):
+        if isinstance(h, TelegramErrorHandler):
+            root.removeHandler(h)
+
+    await update.message.reply_text("⏹ Останавливаюсь…", reply_markup=ReplyKeyboardRemove())
+    logger.warning("Bot stopped by admin %s", ADMIN_ID)
+    await asyncio.sleep(0.5)
+    await context.application.stop()
+
 # ────────────────────────── КЛАВИАТУРЫ ───────────────────────
 START_KB = ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
 
@@ -158,20 +184,6 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as exc:
         logger.error("Не удалось отправить отчёт в чат: %s", exc)
 
-async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    await context.bot.send_message(                 
-        chat_id=STATUS_CHAT_ID,
-        message_thread_id=STATUS_TOPIC_ID,
-        text="⏹ Бот остановлен *админом*",
-        parse_mode="Markdown",
-    )
-    await update.message.reply_text("⏹ Останавливаюсь…", reply_markup=ReplyKeyboardRemove())
-    logger.warning("Bot stopped by admin %s", ADMIN_ID)
-    await asyncio.sleep(1)
-    await context.application.stop()
-
 async def dump(update: Update, _: ContextTypes.DEFAULT_TYPE):
     logger.debug("UPDATE: %s", update)
 
@@ -202,7 +214,8 @@ async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(BOT_TOKEN).post_init(on_startup).build()
 
-    root.addHandler(TelegramErrorHandler(app.bot, STATUS_CHAT_ID, STATUS_TOPIC_ID))
+    tg_handler = TelegramErrorHandler(app, STATUS_CHAT_ID, STATUS_TOPIC_ID)
+    root.addHandler(tg_handler)
 
     # handlers …
     app.add_handler(CommandHandler("start", cmd_start))
