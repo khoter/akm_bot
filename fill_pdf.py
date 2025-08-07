@@ -26,6 +26,8 @@ def fill_pdf(template_path: str, output_path: str, data: dict) -> None:
                 checked = str(data.get(key, "")).lower() in {"true", "on", "1", "yes"}
                 state = YES if checked else OFF
                 annot.update({PdfName("V"): state, PdfName("AS"): state})
+                if '/AP' in annot:                          # 👈 сбросим старый вид
+                    del annot['/AP']
 
     # заставляем ридер отрисовать новые значения
     acro = pdf.Root.AcroForm
