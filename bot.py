@@ -21,7 +21,7 @@ from email_sender import send_email
 START_BTN = "🚀 Начать"
 FORM_BTN  = "📝 Оформить заявку"
 
-START_TIME = datetime.now(ZoneInfo("Europe/Moscow"))
+START_TIME = datetime.now(timezone.utc)
 
 # ────────────────────────── ЛОГИ ────────────────────────────
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
@@ -155,10 +155,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 # ────────────────────────── HEARTBEAT ──────────────────────────
 async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
-    bot = context.bot
-    start = context.job.data['start']
-    now = datetime.now(timezone.utc)
-    uptime = now - START_TIME
+    start = context.job.data["start"]
+    now   = datetime.now(timezone.utc)
+    uptime = now - start
 
     # ping
     t0 = time.perf_counter()
@@ -185,6 +184,15 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_handler(MessageHandler(filters.ALL, dump))  
     app.add_error_handler(error_handler)
+    
+        # 🫀 job-пульс раз в минуту
+    app.job_queue.run_repeating(
+        heartbeat,
+        interval=60,
+        first=0,
+        data={"start": START_TIME},      # передаём время запуска
+    )
+
     logger.info("🚀 Бот запущен…")
     app.run_polling()
 
