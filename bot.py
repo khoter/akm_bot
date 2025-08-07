@@ -13,7 +13,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS
+from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS, REPORT_CHAT_ID, REPORT_TOPIC_ID
 from fill_pdf import fill_pdf
 from email_sender import send_email
 
@@ -70,6 +70,13 @@ async def handle_start_button(update: Update, _: ContextTypes.DEFAULT_TYPE):
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     raw = update.message.web_app_data.data  # type: ignore[attr-defined]
     logger.debug("RAW DATA: %s", raw)
+    
+    if 'date' in data:
+        try:
+            d = datetime.strptime(data['date'], '%Y-%m-%d')
+            data['date'] = d.strftime('%d.%m.%Y')    # 07.08.2025
+        except ValueError:
+            pass
 
     try:
         data = json.loads(raw)
@@ -90,6 +97,27 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as exc:
         logger.exception("Ошибка обработки заявки: %s", exc)
         await update.effective_chat.send_message("❌ Не удалось отправить заявку.")
+
+    try:
+        text = (
+            "📝 *Новая заявка*\n"
+            f"• Дата: {data.get('date')}\n"
+            f"• Время: {data.get('time_range')}\n"
+            f"• Компания: {data.get('company')}\n"
+            f"• Транспорт: {data.get('car_model')} / {data.get('car_plate')}\n"
+            f"• Груз: {data.get('cargo')} × {data.get('cargo_count')}\n"
+            f"• Сотрудник: {data.get('person')}\n"
+        )
+        await context.bot.send_document(
+            chat_id=REPORT_CHAT_ID,
+            message_thread_id=REPORT_TOPIC_ID,
+            document=open(pdf_path, "rb"),
+            filename=os.path.basename(pdf_path),
+            caption=text,
+            parse_mode="Markdown",
+        )
+    except Exception as exc:
+        logger.error("Не удалось отправить отчёт в чат: %s", exc)
 
 
 async def dump(update: Update, _: ContextTypes.DEFAULT_TYPE):

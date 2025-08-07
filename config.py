@@ -11,3 +11,5 @@ TO_EMAIL = os.getenv("TO_EMAIL")
 WEBAPP_URL = "https://marsusya.ru/telegram-form/"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_USER_IDS = [int(x.strip()) for x in os.getenv("ALLOWED_USER_IDS", "").split(",") if x.strip()]
+REPORT_CHAT_ID = os.getenv("REPORT_CHAT_ID")
+REPORT_TOPIC_ID = os.getenv("REPORT_TOPIC_ID")
