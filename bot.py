@@ -152,7 +152,13 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return                                    
+        return
+    await context.bot.send_message(                 
+        chat_id=STATUS_CHAT_ID,
+        message_thread_id=STATUS_TOPIC_ID,
+        text="⏹ Бот остановлен *админом*",
+        parse_mode="Markdown",
+    )
     await update.message.reply_text("⏹ Останавливаюсь…", reply_markup=ReplyKeyboardRemove())
     logger.warning("Bot stopped by admin %s", ADMIN_ID)
     await asyncio.sleep(1)
@@ -185,7 +191,7 @@ async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     await bot.send_message(chat_id=STATUS_CHAT_ID, message_thread_id=STATUS_TOPIC_ID, text=msg, parse_mode='Markdown')
 
 # ────────────────────────── main ───────────────────────────
-def main() -> None:
+async def main_async() -> None:
     app = Application.builder().token(BOT_TOKEN).build()
 
     root.addHandler(TelegramErrorHandler(app.bot, STATUS_CHAT_ID, STATUS_TOPIC_ID)) 
@@ -198,18 +204,25 @@ def main() -> None:
     app.add_error_handler(error_handler)
     
     # 🫀 job-пульс раз в минуту
-    app.job_queue.run_repeating(
+    await app.job_queue.run_repeating(
         heartbeat,
         interval=300,
         first=0,
         data={"start": START_TIME}, 
     )
-
-    logger.info("🚀 Бот запущен…")
-    app.run_polling()
+    
+    await app.bot.send_message(
+        chat_id=STATUS_CHAT_ID, 
+        message_thread_id=STATUS_TOPIC_ID, 
+        text='✅ Бот *запущен*', 
+        parse_mode='Markdown')
+    logger.info("🚀 Бот запущен…"
+    )
+    
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main_async())
 
 
 
