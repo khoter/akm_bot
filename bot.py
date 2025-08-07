@@ -204,13 +204,14 @@ async def main_async() -> None:
     app.add_error_handler(error_handler)
     
     # 🫀 job-пульс раз в минуту
-    await app.job_queue.run_repeating(
+    app.job_queue.run_repeating(
         heartbeat,
         interval=300,
         first=0,
         data={"start": START_TIME}, 
     )
     
+    # сообщение о запуске
     await app.bot.send_message(
         chat_id=STATUS_CHAT_ID, 
         message_thread_id=STATUS_TOPIC_ID, 
