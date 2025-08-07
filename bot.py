@@ -4,8 +4,8 @@
 """
 from __future__ import annotations
 
-import os, json, asyncio, logging
-from datetime import datetime
+import os, json, asyncio, logging, time
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 
 from telegram import Update, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
@@ -19,6 +19,7 @@ from email_sender import send_email
 
 START_BTN = "🚀 Начать"
 FORM_BTN  = "📝 Оформить заявку"
+START_TIME = datetime.now(timezone.utc)
 
 # ────────────────────────── ЛОГИ ────────────────────────────
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
@@ -154,7 +155,8 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     bot = context.bot
     start = context.job.data['start']
-    uptime = datetime.utcnow() - start
+    now = datetime.now(timezone.utc)
+    uptime = now - START_TIME
 
     # ping
     t0 = time.perf_counter()
