@@ -14,7 +14,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS, REPORT_CHAT_ID, REPORT_TOPIC_ID, STATUS_CHAT_ID, STATUS_TOPIC_ID
+from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS, REPORT_CHAT_ID, REPORT_TOPIC_ID, STATUS_CHAT_ID, STATUS_TOPIC_ID, EMAIL_DOMAIN
 from fill_pdf import fill_pdf
 from email_sender import send_email
 
@@ -124,36 +124,51 @@ async def handle_start_button(update: Update, _: ContextTypes.DEFAULT_TYPE):
     logger.debug("Menu shown to %s", user_id)
 
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    raw = update.message.web_app_data.data  
+    if not update.message or not update.message.web_app_data:
+        return
+
+    raw = update.message.web_app_data.data
     logger.debug("RAW DATA: %s", raw)
-    
+
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         logger.error("Неверный JSON: %s", exc)
         await update.effective_chat.send_message("⚠️ Не удалось прочитать данные формы.")
         return
-    
+
     if 'date' in data:
         try:
             d = datetime.strptime(data['date'], '%Y-%m-%d')
-            data['date'] = d.strftime('%d.%m.%Y')    
+            data['date'] = d.strftime('%d.%m.%Y')
         except ValueError:
             pass
-    
+
+    cc_list = []
+    mail3 = str(data.get("mail3", "")).strip().lower()
+    if mail3:
+        if re.fullmatch(r"[a-z]{3}", mail3):
+            cc_email = f"{mail3}@{EMAIL_DOMAIN}"
+            cc_list.append(cc_email)
+            logger.info("CC email: %s", cc_email)
+        else:
+            logger.warning("Игнорирую некорректное mail3=%r", mail3)
+
     try:
         os.makedirs("output", exist_ok=True)
 
         async with PDF_LOCK:
             fill_pdf("template.pdf", PDF_TMP_PATH, data)
             os.replace(PDF_TMP_PATH, PDF_PATH)
-        
+
         subject = 'Заявка на пропуск от ООО "АК Микротех"'
         body    = "Здравствуйте!\nК данному письму прилагается заявка на пропуск для транспортного средства."
 
-        await asyncio.to_thread(send_email, subject, body, PDF_PATH)
+        await asyncio.to_thread(send_email, subject, body, PDF_PATH, cc=cc_list)
+
         await update.effective_chat.send_message("✅ Заявка успешно отправлена!")
-        logger.info("Заявка сохранена в %s и отправлена", PDF_PATH)
+        logger.info("Заявка сохранена в %s и отправлена. CC=%s", PDF_PATH, cc_list)
+
     except Exception as exc:
         logger.exception("Ошибка обработки заявки: %s", exc)
         await update.effective_chat.send_message("❌ Не удалось отправить заявку.")
@@ -172,7 +187,7 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             await context.bot.send_document(
                 chat_id=REPORT_CHAT_ID,
                 message_thread_id=REPORT_TOPIC_ID,
-                document= f,
+                document=f,
                 filename=os.path.basename(PDF_PATH),
                 caption=text,
                 parse_mode="Markdown",
@@ -254,7 +269,7 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_error_handler(error_handler)
 
-    app.job_queue.run_repeating(heartbeat, interval=300, first=0, data={"start": START_TIME})
+    app.job_queue.run_repeating(heartbeat, interval=1200, first=0, data={"start": START_TIME})
 
     app.run_polling()
 
