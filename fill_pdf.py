@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Dict, Any
-import os
+import os, uuid
 
 from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName, PdfObject, PdfString
 import fitz  
@@ -14,14 +14,12 @@ def _boolish(v: Any) -> bool:
         return False
     return str(v).strip().lower() in {"1", "true", "on", "yes", "y", "да"}
 
-def _fill_acroform(template_path: str, out_path: str, data: Dict[str, Any]) -> None:
+def _fill_pdfrw(template_path: str, out_path: str, data: Dict[str, Any]) -> None:
     pdf = PdfReader(template_path)
-
     for page in pdf.pages:
         annots = getattr(page, "Annots", None)
         if not annots:
             continue
-
         for a in annots:
             if a.Subtype != PdfName("Widget") or not getattr(a, "T", None):
                 continue
@@ -29,10 +27,7 @@ def _fill_acroform(template_path: str, out_path: str, data: Dict[str, Any]) -> N
             ft  = getattr(a, "FT", None)
 
             if ft == PdfName("Tx") and key in data:
-                a.update(PdfDict(
-                    V=PdfString.encode(str(data[key])),
-                    AP=""  
-                ))
+                a.update(PdfDict(V=PdfString.encode(str(data[key]))))
 
             elif ft == PdfName("Btn"):
                 checked = _boolish(data.get(key, ""))
@@ -46,32 +41,44 @@ def _fill_acroform(template_path: str, out_path: str, data: Dict[str, Any]) -> N
                 a.update(PdfDict(V=state, AS=state))
 
     if getattr(pdf.Root, "AcroForm", None):
-        pdf.Root.AcroForm.update(PdfDict(NeedAppearances=PdfObject("false")))
-
+        pdf.Root.AcroForm.update(PdfDict(NeedAppearances=PdfObject("true")))
     PdfWriter(out_path, trailer=pdf).write()
 
-def _flatten_reimport(in_path: str, out_path: str) -> None:
-    """Полный флеттенинг: переносим каждую страницу как изображённую в новый PDF.
-    Форм, аннотаций и AcroForm в результате не остаётся вообще.
-    """
-    src = fitz.open(in_path)
+def _ensure_widget_appearances(path_in: str, path_out: str) -> None:
+    """Открываем PDF и принудительно генерим AP для всех виджетов."""
+    doc = fitz.open(path_in)
+    for page in doc:
+        widgets = page.widgets() or []
+        for w in widgets:
+            w.update()  
+
+    doc.save(path_out, deflate=True, clean=True, garbage=4)
+    doc.close()
+
+def _flatten_reimport(path_in: str, path_out: str) -> None:
+    """Финально «запекаем»: переносим отрисованные страницы в новый PDF."""
+    src = fitz.open(path_in)
     dst = fitz.open()
     for i in range(len(src)):
         sp = src[i]
         dp = dst.new_page(width=sp.rect.width, height=sp.rect.height)
         dp.show_pdf_page(dp.rect, src, i)
-    dst.save(out_path, deflate=True, clean=True, garbage=4)  
+    dst.save(path_out, deflate=True, clean=True, garbage=4)
     dst.close()
     src.close()
 
 def fill_pdf(template_path: str, output_path: str, data: Dict[str, Any]) -> None:
-    """Заполнить и «запечь» PDF-форму в обычный нередактируемый PDF."""
-    tmp = output_path + ".tmpfill.pdf"
-    _fill_acroform(template_path, tmp, data)
+    """Заполнить форму и получить обычный нередактируемый PDF (без форм/аннотаций)."""
+    base = output_path + f".tmp-{uuid.uuid4().hex}"
+    tmp1 = base + ".pdfrw.pdf"     
+    tmp2 = base + ".ap.pdf"        
     try:
-        _flatten_reimport(tmp, output_path)
+        _fill_pdfrw(template_path, tmp1, data)
+        _ensure_widget_appearances(tmp1, tmp2)   
+        _flatten_reimport(tmp2, output_path)     
     finally:
-        try:
-            os.remove(tmp)
-        except Exception:
-            pass
+        for p in (tmp1, tmp2):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
