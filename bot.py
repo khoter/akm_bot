@@ -9,7 +9,7 @@ from datetime import datetime, timezone, time
 from time import perf_counter
 from logging.handlers import RotatingFileHandler
 
-from telegram import Update, MenuButtonWebApp, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ContextTypes, filters
 )
@@ -101,6 +101,13 @@ START_KB = ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_key
 
 # ─────────────────────── ХЕНДЛЕРЫ ──────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb_inline = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("📝 Оформить заявку", web_app=WebAppInfo(url=WEBAPP_URL))]]
+    )
+    await update.message.reply_text(
+        "Добро пожаловать! Нажмите кнопку, чтобы начать.",
+        reply_markup=kb_inline,
+    )
     await update.message.reply_text(
         "Добро пожаловать! Нажмите кнопку, чтобы начать.",
         reply_markup=ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
@@ -148,7 +155,7 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     raw = update.message.web_app_data.data
     logger.debug("RAW DATA: %s", raw)
-    
+
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
