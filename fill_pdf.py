@@ -1,82 +1,130 @@
-from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName, PdfObject, PdfString
-import os, shutil, subprocess
+# -*- coding: utf-8 -*-
 
-def _flatten_pdf_ghostscript(src: str, dst: str) -> None:
-    """
-    Сплющить PDF через Ghostscript (pdfwrite).
-    Убирает формы и аннотации, сохраняет вектор/текст где возможно.
-    """
-    if not shutil.which("gs"):
-        raise RuntimeError("Ghostscript (gs) не найден в PATH")
-    cmd = [
-        "gs",
-        "-dBATCH", "-dNOPAUSE", "-dSAFER",
-        "-sDEVICE=pdfwrite",
-        "-dCompatibilityLevel=1.4",
-        "-dDetectDuplicateImages=true",
-        "-dCompressFonts=true",
-        f"-sOutputFile={dst}",
-        src,
-    ]
-    subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+from __future__ import annotations
 
-def fill_pdf(template_path: str, output_path: str, data: dict, *, flatten: bool = True) -> None:
+import os
+from typing import Any
+
+from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName, PdfString, PdfObject
+import fitz  
+
+
+OFF = PdfName("Off")
+
+
+def _boolish(v: Any) -> bool:
+    """Интерпретировать значение как булево для чекбоксов."""
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return False
+    s = str(v).strip().lower()
+    return s in {"1", "true", "yes", "on", "да", "y", "д", "угу"}
+
+
+def _fill_with_pdfrw(template_path: str, tmp_path: str, data: dict) -> None:
+    """
+    1) Читает шаблон
+    2) Записывает значения в поля формы (/V), у чекбоксов также /AS
+    3) Включает NeedAppearances, чтобы вьюверы могли сгенерировать /AP при необходимости
+    4) Сохраняет во временный PDF (без flatten)
+    """
     pdf = PdfReader(template_path)
 
     for page in pdf.pages:
-        for annot in (page.Annots or []):
-            if annot.Subtype != PdfName('Widget') or not annot.T:
+        annots = getattr(page, "Annots", None)
+        if not annots:
+            continue
+
+        for annot in annots:
+            try:
+                if annot.Subtype != PdfName("Widget") or not getattr(annot, "T", None):
+                    continue
+
+                key = annot.T.to_unicode().strip("()")
+                ft = getattr(annot, "FT", None)
+
+                if ft == PdfName("Tx"):
+                    if key in data and data[key] is not None:
+                        annot.update(
+                            PdfDict(
+                                V=PdfString.encode(str(data[key]))
+                            )
+                        )
+
+                elif ft == PdfName("Btn"):
+                    checked = _boolish(data.get(key, ""))
+                    on_name = None
+
+                    ap = getattr(annot, "AP", None)
+                    if ap and getattr(ap, "N", None):
+                        for k in ap.N.keys():
+                            if k != OFF:
+                                on_name = k
+                                break
+
+                    if on_name is None:
+                        on_name = PdfName("Yes")
+
+                    state = on_name if checked else OFF
+                    annot.update(PdfDict(V=state, AS=state))
+
+            except Exception:
                 continue
 
-            key = annot.T.to_unicode().strip('()')
-            ft  = annot.FT
+    if getattr(pdf.Root, "AcroForm", None) is not None:
+        pdf.Root.AcroForm.update(PdfDict(NeedAppearances=PdfObject("true")))
 
-            if ft == PdfName('Tx') and key in data:
-                annot.update(PdfDict(
-                    V=PdfString.encode(str(data[key])),
-                    AP='' 
-                ))
-            elif ft == PdfName('Btn'):
-                checked = str(data.get(key, '')).lower() in {'true', 'on', '1', 'yes'}
+    PdfWriter(tmp_path, trailer=pdf).write()
 
-                on_val = PdfName('Yes')
-                try:
-                    if '/AP' in annot and '/N' in annot.AP and annot.AP.N:
-                        on_val = next(iter(annot.AP.N.keys()))
-                except Exception:
-                    pass
 
-                try:
-                    if '/AP' not in annot or not getattr(annot.AP, 'N', None) or on_val not in annot.AP.N:
-                        annot.AP = PdfDict(N=PdfDict())
-                        annot.AP.N[PdfName('Off')] = PdfDict(Type=PdfName('XObject'),
-                                                             Subtype=PdfName('Form'),
-                                                             BBox='0 0 15 15',
-                                                             Resources=PdfDict())
-                        annot.AP.N[on_val] = PdfDict(Type=PdfName('XObject'),
-                                                     Subtype=PdfName('Form'),
-                                                     BBox='0 0 15 15',
-                                                     Resources=PdfDict())
-                except Exception:
-                    pass
+def _materialize_and_flatten(in_path: str, out_path: str) -> None:
+    """
+    Через PyMuPDF:
+      - форсируем генерацию /AP (update) для всех виджетов;
+      - сплющиваем виджеты (flatten), превращая их в «краску» на странице.
+    """
+    doc = fitz.open(in_path)
 
-                state = on_val if checked else PdfName('Off')
-                annot.update({PdfName('V'): state, PdfName('AS'): state})
-
-    if pdf.Root.AcroForm:
-        pdf.Root.AcroForm.update(PdfDict(NeedAppearances=PdfObject('true')))
-
-    PdfWriter(output_path, trailer=pdf).write()
-
-    if flatten:
-        tmp = output_path + ".gs.tmp.pdf"
-        try:
-            _flatten_pdf_ghostscript(output_path, tmp)
-            os.replace(tmp, output_path)
-        except Exception as e:
+    for page in doc:
+        widgets = page.widgets() or []
+        for w in widgets:
             try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
+                w.update()  
             except Exception:
                 pass
-            raise
+        try:
+            page.update_widgets()
+        except Exception:
+            pass
+
+    for page in doc:
+        widgets = page.widgets() or []
+        for w in widgets:
+            try:
+                w.flatten()
+            except Exception:
+                pass
+
+    doc.save(out_path, incremental=False)
+    doc.close()
+
+
+def fill_pdf(template_path: str, output_path: str, data: dict) -> None:
+    """
+    Главная функция:
+      - заполнение полей формы;
+      - генерация внешних видов;
+      - сплющивание в «обычный» PDF без форм.
+    """
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+    tmp_path = output_path + ".tmp_pdfrw.pdf"
+
+    _fill_with_pdfrw(template_path, tmp_path, data)
+    _materialize_and_flatten(tmp_path, output_path)
+
+    try:
+        os.remove(tmp_path)
+    except OSError:
+        pass
