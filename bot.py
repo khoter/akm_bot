@@ -11,7 +11,7 @@ from logging.handlers import RotatingFileHandler
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters
+    Application, CommandHandler, MessageHandler, ContextTypes, filters, ConversationHandler
 )
 
 from config import BOT_TOKEN, WEBAPP_URL, ALLOWED_USER_IDS, REPORT_CHAT_ID, REPORT_TOPIC_ID, STATUS_CHAT_ID, STATUS_TOPIC_ID, EMAIL_DOMAIN
@@ -22,6 +22,7 @@ from email_sender import send_email
 START_BTN = "🚀 Начать"
 FORM_BTN  = "📝 Оформить заявку"
 STOP_BTN  = "🛑 Остановить бота"
+MANUAL_BTN = "🧰 Ручной режим"
 
 ADMIN_ID = ALLOWED_USER_IDS[0]
 
@@ -96,32 +97,19 @@ async def on_startup(app: Application):
     except Exception as e:
         logger.error("Не удалось отправить стартовое сообщение: %s", e)
 
+def yn_to_bool(text: str) -> bool:
+    return text.strip().lower() in ("да", "yes", "y", "д", "угу")
+
 # ────────────────────────── КЛАВИАТУРЫ ───────────────────────
-START_KB = ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
+START_KB = ReplyKeyboardMarkup([[START_BTN, MANUAL_BTN]], resize_keyboard=True, one_time_keyboard=True)
+YES_NO_KB = ReplyKeyboardMarkup([["Да", "Нет"]], resize_keyboard=True)
 
 # ─────────────────────── ХЕНДЛЕРЫ ──────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb_inline = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("📝 Оформить заявку", web_app=WebAppInfo(url=WEBAPP_URL))]]
-    )
     await update.message.reply_text(
-        "Добро пожаловать! Нажмите кнопку, чтобы начать.",
-        reply_markup=kb_inline,
+        "Добро пожаловать! Нажмите кнопку, чтобы начать или выберите ручной режим.",
+        reply_markup=START_KB
     )
-    await update.message.reply_text(
-        "Добро пожаловать! Нажмите кнопку, чтобы начать.",
-        reply_markup=ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
-    )
-    try:
-        await context.bot.set_chat_menu_button(
-            chat_id=update.effective_chat.id,
-            menu_button=MenuButtonWebApp(
-                text="📝 Оформить заявку",
-                web_app=WebAppInfo(url=WEBAPP_URL),
-            )
-        )
-    except Exception as e:
-        logger.warning("MenuButtonWebApp не установилась: %s", e)
 
 async def handle_start_button(update: Update, _: ContextTypes.DEFAULT_TYPE):
     if update.message.text != START_BTN:
@@ -140,6 +128,14 @@ async def handle_start_button(update: Update, _: ContextTypes.DEFAULT_TYPE):
     reply_markup=build_menu_kb(user_id)
     )
     logger.debug("Menu shown to %s", user_id)
+
+async def handle_manual_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text != MANUAL_BTN:
+        return
+    if update.effective_user.id not in ALLOWED_USER_IDS:
+        await update.message.reply_text("⛔️ У вас нет доступа к заполнению формы.", reply_markup=ReplyKeyboardRemove())
+        return
+    await start_manual_form(update, context)
 
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.web_app_data:
@@ -261,6 +257,145 @@ async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.application.stop_running()
 
+(
+    DATE, TIME, COMPANY, CAR_MODEL, CAR_PLATE, CARGO, CARGO_COUNT, PERSON, MAIL3,
+    USE_LIFT, MATERIALS_IN, MATERIALS_OUT, UNLOADING_BIG, LOADING_BIG, UNLOADING_SMALL, LOADING_SMALL
+) = range(16)
+
+async def start_manual_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ALLOWED_USER_IDS:
+        await update.message.reply_text("⛔ У вас нет доступа к заполнению формы.")
+        return ConversationHandler.END
+
+    await update.message.reply_text("📅 Введите дату (ДД.ММ.ГГГГ):", reply_markup=ReplyKeyboardRemove())
+    return DATE
+
+async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    raw = update.message.text.strip()
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+            dt = datetime.strptime(raw, "%Y-%m-%d")
+        else:
+            dt = datetime.strptime(raw, "%d.%m.%Y")
+        context.user_data["date"] = dt.strftime("%d.%m.%Y")
+    except Exception:
+        await update.message.reply_text("⚠️ Формат даты не распознан. Введите в виде ДД.ММ.ГГГГ.")
+        return DATE
+
+    await update.message.reply_text("⏰ Введите время (например: 10:00 - 18:00):")
+    return TIME
+
+async def get_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["time_range"] = update.message.text.strip()
+    await update.message.reply_text("🏢 Введите название компании:")
+    return COMPANY
+
+async def get_company(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["company"] = update.message.text.strip()
+    await update.message.reply_text("🚚 Введите модель автомобиля:")
+    return CAR_MODEL
+
+async def get_car_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["car_model"] = update.message.text.strip()
+    await update.message.reply_text("🔢 Введите госномер автомобиля:")
+    return CAR_PLATE
+
+async def get_car_plate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["car_plate"] = update.message.text.strip()
+    await update.message.reply_text("📦 Что за груз?")
+    return CARGO
+
+async def get_cargo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["cargo"] = update.message.text.strip()
+    await update.message.reply_text("📦 Укажите количество груза (число):")
+    return CARGO_COUNT
+
+async def get_cargo_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        context.user_data["cargo_count"] = int(update.message.text.strip())
+    except ValueError:
+        await update.message.reply_text("⚠ Введите число!")
+        return CARGO_COUNT
+    await update.message.reply_text("👤 ФИО сопровождающего:")
+    return PERSON
+
+async def get_person(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["person"] = update.message.text.strip()
+    await update.message.reply_text("📧 Введите первые 3 буквы вашей почты (или оставьте пустым):")
+    return MAIL3
+
+async def get_mail3(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mail3 = update.message.text.strip().lower()
+    if mail3:
+        if re.fullmatch(r"[a-z]{3}", mail3):
+            context.user_data["mail3"] = mail3
+        else:
+            await update.message.reply_text("⚠️ Введите ровно 3 латинские буквы или оставьте пустым. Повторите ввод:")
+            return MAIL3
+
+    await update.message.reply_text("📦 Используется ли лифт?", reply_markup=YES_NO_KB)
+    return USE_LIFT
+
+
+async def get_use_lift(update, context):
+    context.user_data["use_lift"] = yn_to_bool(update.message.text)
+    await update.message.reply_text("📦 Материалы вносятся?", reply_markup=YES_NO_KB)
+    return MATERIALS_IN
+
+async def get_materials_in(update, context):
+    context.user_data["materials_in"] = yn_to_bool(update.message.text)
+    await update.message.reply_text("📦 Материалы выносятся?", reply_markup=YES_NO_KB)
+    return MATERIALS_OUT
+
+async def get_materials_out(update, context):
+    context.user_data["materials_out"] = yn_to_bool(update.message.text)
+    await update.message.reply_text("📦 Выгрузка крупногабаритного?", reply_markup=YES_NO_KB)
+    return UNLOADING_BIG
+
+async def get_unloading_big(update, context):
+    context.user_data["unloading_big"] = yn_to_bool(update.message.text)
+    await update.message.reply_text("📦 Погрузка крупногабаритного?", reply_markup=YES_NO_KB)
+    return LOADING_BIG
+
+async def get_loading_big(update, context):
+    context.user_data["loading_big"] = yn_to_bool(update.message.text)
+    await update.message.reply_text("📦 Выгрузка мелкогабаритного?", reply_markup=YES_NO_KB)
+    return UNLOADING_SMALL
+
+async def get_unloading_small(update, context):
+    context.user_data["unloading_small"] = yn_to_bool(update.message.text)
+    await update.message.reply_text("📦 Погрузка мелкогабаритного?", reply_markup=YES_NO_KB)
+    return LOADING_SMALL
+
+async def get_loading_small(update, context):
+    context.user_data["loading_small"] = yn_to_bool(update.message.text)
+    await process_form(update, context)
+    return ConversationHandler.END
+
+async def process_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = context.user_data.copy()
+
+    cc_list = []
+    m3 = data.get("mail3")
+    if m3:
+        cc_list.append(f"{m3}@{EMAIL_DOMAIN}")
+
+    os.makedirs("output", exist_ok=True)
+    output_path = f"output/form_{update.effective_user.id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf"
+
+    fill_pdf("template.pdf", output_path, data)
+
+    subject = 'Заявка на пропуск от ООО "АК Микротех"'
+    body = "Здравствуйте!\nК данному письму прилагается заявка на пропуск для транспортного средства."
+    await asyncio.to_thread(send_email, subject, body, output_path, cc=cc_list)
+
+    await update.message.reply_text("✅ Заявка успешно отправлена!", reply_markup=ReplyKeyboardRemove())
+    context.user_data.clear()
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Заполнение формы отменено.", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
+
 # ────────────────────────── HEARTBEAT ──────────────────────────
 async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     bot = context.bot 
@@ -289,14 +424,38 @@ def main():
     tg_handler.setFormatter(logging.Formatter(LOG_FORMAT))
     root.addHandler(tg_handler)
 
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{START_BTN}$"), handle_start_button))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{STOP_BTN}$"),  handle_stop))
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("manual_form", start_manual_form)],
+        states={
+            DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_date)],
+            TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_time)],
+            COMPANY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_company)],
+            CAR_MODEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_model)],
+            CAR_PLATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_plate)],
+            CARGO: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_cargo)],
+            CARGO_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_cargo_count)],
+            PERSON: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_person)],
+            MAIL3: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_mail3)],
+            USE_LIFT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_use_lift)],
+            MATERIALS_IN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_materials_in)],
+            MATERIALS_OUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_materials_out)],
+            UNLOADING_BIG: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_unloading_big)],
+            LOADING_BIG: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loading_big)],
+            UNLOADING_SMALL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_unloading_small)],
+            LOADING_SMALL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loading_small)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    app.add_handler(conv, group=0)
+
+    app.add_handler(CommandHandler("start", cmd_start), group=1)
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{MANUAL_BTN}$"), handle_manual_button), group=1)
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{START_BTN}$"), handle_start_button), group=1)
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{STOP_BTN}$"), handle_stop), group=1)
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data), group=1)
     app.add_error_handler(error_handler)
 
     app.job_queue.run_repeating(heartbeat, interval=1200, first=0, data={"start": START_TIME})
-
     app.run_polling()
 
 if __name__ == "__main__":
