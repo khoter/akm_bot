@@ -11,12 +11,17 @@ import io
 import math
 
 
-DEFAULT_FONT = "Helvetica"  
+DEFAULT_FONT = "TimesNewRoman"  
 TEXT_SIZE = 12
 CHECK_SIZE = 10 
 
+try:
+    pdfmetrics.registerFont(TTFont("TimesNewRoman", "fonts/timesnewromanpsmt.ttf"))
+except Exception as e:
+    DEFAULT_FONT = "Helvetica"
+    CHECK_FONT   = "ZapfDingbats"
+
 def _rect_to_xy(rect) -> Tuple[float, float, float, float]:
-    # rect: [llx, lly, urx, ury]
     llx, lly, urx, ury = [float(x) for x in rect]
     return llx, lly, urx, ury
 
@@ -39,18 +44,26 @@ def _fit_text(canvas_obj, text: str, x: float, y: float, w: float, h: float):
 
     canvas_obj.drawString(x + pad_x, y + (h - fs) / 2.0, text)
 
-def _draw_check(canvas_obj, x: float, y: float, w: float, h: float, checked: bool):
+def _draw_check(c, x, y, w, h, checked: bool):
     if not checked:
         return
-    canvas_obj.setLineWidth(1)
-    x1 = x + w * 0.2
-    y1 = y + h * 0.5
-    x2 = x + w * 0.45
-    y2 = y + h * 0.25
-    x3 = x + w * 0.8
-    y3 = y + h * 0.75
-    canvas_obj.line(x1, y1, x2, y2)
-    canvas_obj.line(x2, y2, x3, y3)
+    pad = max(0.0, min(w, h) * 0.08)
+    box_w = max(1.0, w - 2*pad)
+    box_h = max(1.0, h - 2*pad)
+
+    fs = min(box_w, box_h) * 0.95
+
+    if CHECK_FONT == "DejaVuSans":
+        text = "✓"
+        c.setFont(CHECK_FONT, fs)
+        tw = c.stringWidth(text, CHECK_FONT, fs)
+        c.drawString(x + (w - tw)/2, y + (h - fs)/2 - fs*0.08, text)
+        return
+    
+    c.setFont("ZapfDingbats", fs)
+    text = "\x33"
+    tw = c.stringWidth(text, "ZapfDingbats", fs)
+    c.drawString(x + (w - tw)/2, y + (h - fs)/2 - fs*0.08, text)
 
 def fill_pdf(template_path: str, output_path: str, data: Dict) -> None:
     """
