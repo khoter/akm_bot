@@ -12,6 +12,8 @@ import math
 
 
 DEFAULT_FONT = "TimesNewRoman"  
+CHECK_FONT = "TimesNewRoman"  
+
 TEXT_SIZE = 12
 CHECK_SIZE = 10 
 
