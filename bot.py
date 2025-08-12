@@ -373,7 +373,7 @@ async def process_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cc_list.append(f"{m3}@{EMAIL_DOMAIN}")
 
     os.makedirs("output", exist_ok=True)
-    output_path = f"output/form_{update.effective_user.id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf"
+    output_path = "output/form_latest.pdf"
 
     fill_pdf("template.pdf", output_path, data)
 
