@@ -9,7 +9,7 @@ from datetime import datetime, timezone, time
 from time import perf_counter
 from logging.handlers import RotatingFileHandler
 
-from telegram import Update, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, MenuButtonWebApp, ReplyKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ContextTypes, filters
 )
@@ -100,10 +100,21 @@ async def on_startup(app: Application):
 START_KB = ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
 
 # ─────────────────────── ХЕНДЛЕРЫ ──────────────────────────
-async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Добро пожаловать! Нажмите кнопку, чтобы начать.", reply_markup=START_KB
+        "Добро пожаловать! Нажмите кнопку, чтобы начать.",
+        reply_markup=ReplyKeyboardMarkup([[START_BTN]], resize_keyboard=True, one_time_keyboard=True)
     )
+    try:
+        await context.bot.set_chat_menu_button(
+            chat_id=update.effective_chat.id,
+            menu_button=MenuButtonWebApp(
+                text="📝 Оформить заявку",
+                web_app=WebAppInfo(url=WEBAPP_URL),
+            )
+        )
+    except Exception as e:
+        logger.warning("MenuButtonWebApp не установилась: %s", e)
 
 async def handle_start_button(update: Update, _: ContextTypes.DEFAULT_TYPE):
     if update.message.text != START_BTN:
@@ -127,9 +138,17 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not update.message or not update.message.web_app_data:
         return
 
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    if user_id not in ALLOWED_USER_IDS:
+        await context.bot.send_message(chat_id=chat_id, text="⛔️ У вас нет доступа к использованию формы.")
+        logger.warning("[ACCESS DENIED] user_id=%s не в ALLOWED_USER_IDS", user_id)
+        return
+    
     raw = update.message.web_app_data.data
     logger.debug("RAW DATA: %s", raw)
-
+    
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
