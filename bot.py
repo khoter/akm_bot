@@ -129,14 +129,6 @@ async def handle_start_button(update: Update, _: ContextTypes.DEFAULT_TYPE):
     )
     logger.debug("Menu shown to %s", user_id)
 
-async def handle_manual_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text != MANUAL_BTN:
-        return
-    if update.effective_user.id not in ALLOWED_USER_IDS:
-        await update.message.reply_text("⛔️ У вас нет доступа к заполнению формы.", reply_markup=ReplyKeyboardRemove())
-        return
-    await start_manual_form(update, context)
-
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.web_app_data:
         return
@@ -425,7 +417,10 @@ def main():
     root.addHandler(tg_handler)
 
     conv = ConversationHandler(
-        entry_points=[CommandHandler("manual_form", start_manual_form)],
+        entry_points=[
+            CommandHandler("manual_form", start_manual_form),
+            MessageHandler(filters.TEXT & filters.Regex(f"^{re.escape(MANUAL_BTN)}$"), start_manual_form),
+        ],
         states={
             DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_date)],
             TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_time)],
@@ -449,7 +444,6 @@ def main():
     app.add_handler(conv, group=0)
 
     app.add_handler(CommandHandler("start", cmd_start), group=1)
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{MANUAL_BTN}$"), handle_manual_button), group=1)
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{START_BTN}$"), handle_start_button), group=1)
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(f"^{STOP_BTN}$"), handle_stop), group=1)
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data), group=1)
